@@ -211,7 +211,7 @@ def test_audio_frames():
             if audio_frames == 1:
                 check(
                     "audio: LA1 header parses (rate/channels/count)",
-                    rate == 16000 and chans == 1 and count > 0 and len(m) == 11 + count * 2,
+                    rate == 48000 and chans == 1 and count > 0 and len(m) == 11 + count * 2,
                     f"rate={rate} chans={chans} count={count} bytes={len(m)}",
                 )
         elif m[:3] == b"LF1":

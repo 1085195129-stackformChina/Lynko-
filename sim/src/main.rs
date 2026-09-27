@@ -205,18 +205,21 @@ async fn handle_link(stream: tokio::net::TcpStream) {
         }
     });
 
-    // Audio stream (activated by StartAudio): real LA1 PCM frames at 16 kHz
-    // mono, 100 ms per frame, so e2e can prove the desktop actually decodes
+    // Audio stream (activated by StartAudio): real LA1 PCM frames at 48 kHz
+    // mono, 20 ms per frame, so e2e can prove the desktop actually decodes
     // them as audio instead of swallowing them as file chunks.
     let audio_on = Arc::new(AtomicU64::new(0));
     let audio_flag = audio_on.clone();
     let audio_tx = tx.clone();
     tokio::spawn(async move {
-        let rate: u16 = 16_000;
-        let n: usize = (rate as usize) / 10; // 100 ms
+        // 48 kHz mono, 20 ms frames — mirrors the real phone's AudioSession
+        // (AudioPlaybackCapture runs at the mixer rate) so the harness
+        // exercises the same framing the device produces.
+        let rate: u16 = 48_000;
+        let n: usize = (rate as usize) / 50; // 20 ms
         let mut t: usize = 0;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             if audio_flag.load(Ordering::Relaxed) != 1 { continue; }
             // 440 Hz sine so a listener can hear it is real audio, not silence.
             let samples: Vec<i16> = (0..n)

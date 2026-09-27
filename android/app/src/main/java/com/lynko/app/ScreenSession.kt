@@ -52,7 +52,13 @@ class ScreenSession(
     // Service displayMetrics returns the app window (2400-136=2264 on this
     // device), which produced a 720x1510 VirtualDisplay on a 1080x2400
     // panel — wrong aspect, taps mapped 37% off vertically.
-    private val realSize = ScreenSize.size(context)
+    //
+    // Rotation: realSize is re-read on EVERY pipeline build, not once at
+    // construction. maximumWindowMetrics follows the live orientation, so a
+    // rotated phone produces a landscape VirtualDisplay; the old code kept
+    // the portrait dims, squashing landscape into a 540x1200 canvas, and
+    // desktop fill(crop) then magnified that distortion.
+    private var realSize = ScreenSize.size(context)
     // Capture at 540p: 720p frames saturated the desktop Tauri IPC bridge
     // (211 drops/25s in production logs). 540p halves the per-frame bytes
     // while still looking sharp on the mirrored window. Touch coords stay
@@ -123,6 +129,9 @@ class ScreenSession(
     private var reader: ImageReader? = null
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
+    // Rotation fires several CONFIGURATION_CHANGED in quick succession —
+    // without a debounce every one tears down and rebuilds the pipeline.
+    private var lastRotateAt = 0L
 
     @Volatile private var running = false
 
@@ -131,6 +140,16 @@ class ScreenSession(
             if (i?.action == Intent.ACTION_SCREEN_ON) {
                 Log.i("lynko", "screen on — rebuilding capture pipeline")
                 handler?.post { safeBuild("rebuild-after-unlock") }
+            } else if (i?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
+                // Rotation: the panel swapped aspect — rebuild on the new
+                // dims (applyRequested re-reads realSize). Without this the
+                // mirror kept the old portrait canvas and squashed the
+                // landscape feed into it.
+                Log.i("lynko", "orientation changed — rebuilding capture pipeline")
+                val now = System.currentTimeMillis()
+                if (now - lastRotateAt < 800L) return
+                lastRotateAt = now
+                handler?.post { safeBuild("rebuild-after-rotation") }
             }
         }
     }
@@ -156,8 +175,10 @@ class ScreenSession(
     }
 
     /** Resolve the effective capture size: the desktop's capture width wins,
-     *  otherwise the tuned 540p default. */
+     *  otherwise the tuned 540p default. Re-reads the panel size every time
+     *  so a mid-mirror rotation lands on the new aspect ratio. */
     private fun applyRequested() {
+        realSize = ScreenSize.size(context)
         val target = if (requestedMaxWidth > 0) requestedMaxWidth else 540
         scaleToDisplay = (target / realSize.x.toFloat()).coerceAtMost(1f)
         width = (realSize.x * scaleToDisplay).toInt().coerceAtLeast(360)
@@ -177,6 +198,7 @@ class ScreenSession(
         running = true
 
         val f = IntentFilter(Intent.ACTION_SCREEN_ON)
+        f.addAction(Intent.ACTION_CONFIGURATION_CHANGED)
         if (Build.VERSION.SDK_INT >= 33) {
             context.registerReceiver(screenReceiver, f, Context.RECEIVER_NOT_EXPORTED)
         } else {

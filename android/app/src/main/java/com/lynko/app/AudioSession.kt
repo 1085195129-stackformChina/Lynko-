@@ -35,7 +35,13 @@ class AudioSession(
 
     fun start() {
         if (capturing) return
-        val rate = 16000
+        // 48 kHz: AudioPlaybackCapture is a mixer tap, so this is the rate the
+        // phone's own audio pipeline already runs at — capturing at 16 kHz threw
+        // away the top two octaves (audible as muffled/quality loss) and forced
+        // a resample on the desktop. Mono on purpose: the desktop builds a
+        // single-channel Web Audio buffer, so stereo would double the wire for
+        // nothing.
+        val rate = 48000
         val chans = AudioFormat.CHANNEL_IN_MONO
         val fmt = AudioFormat.ENCODING_PCM_16BIT
         val minBuf = AudioRecord.getMinBufferSize(rate, chans, fmt).coerceAtLeast(4096)
@@ -69,7 +75,10 @@ class AudioSession(
         capturing = true
         record?.startRecording()
         thread = Thread {
-            val buf = ShortArray(1600) // 100 ms @ 16 kHz
+            // 20 ms at 48 kHz. 100 ms chunks arrived in bursts that the
+            // desktop's drain timer quantized, which is what produced the
+            // audible delay and the stutter; small chunks keep both low.
+            val buf = ShortArray(960)
             while (capturing) {
                 val n = record?.read(buf, 0, buf.size) ?: break
                 if (n <= 0) continue

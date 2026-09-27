@@ -220,7 +220,6 @@ export default function App() {
    * queue survive all tab switches. Audio follows the mirror: start on
    * audio_start (mirror or manual), stop on mirror end or disconnect. */
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const audioQueueRef = useRef<{ rate: number; chans: number; pcm: Int16Array }[]>([]);
   const audioHeadRef = useRef(0);
 
   // Chromium autoplay policy: AudioContext created/resumed outside a user
@@ -242,56 +241,63 @@ export default function App() {
   const audioPlayingRef = useRef(false);
   audioPlayingRef.current = audioPlaying;
 
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    api.on<{ rate: number; chans: number; count: number; pcm: number[] }>("audio_chunk", (e) => {
-      if (!readPreferences().audio) return;
-      const { rate, pcm } = e.payload;
-      const arr = Int16Array.from(pcm);
-      if (!arr.length) return;
-      // Not playing: DROP, don't queue — a backlog would replay seconds-old
-      // audio the moment playback resumes.
-      if (!audioPlayingRef.current) return;
-      audioQueueRef.current.push({ rate, chans: e.payload.chans, pcm: arr });
-    }).then((u) => { un = u; });
-    return () => { un?.(); };
-  }, []);
+  // Schedule each chunk the moment it arrives. The old path queued chunks and
+  // drained them on a 100ms setInterval, so every chunk waited up to a full
+  // tick before it was even scheduled — that quantization is what made the
+  // audio lag behind the picture and stutter whenever a chunk missed a tick.
+  // Scheduling on arrival also lets a small jitter buffer absorb LAN bursts
+  // without accumulating latency.
+  const playChunk = (rate: number, pcm: Int16Array) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state !== "running" || !pcm.length) return;
+    const now = ctx.currentTime;
+    const head = audioHeadRef.current;
+    // Underrun (head already passed) or drift ahead: re-anchor to a small
+    // jitter buffer. Never let the head run away — a backlog replays
+    // seconds-old audio and stays late forever.
+    if (head < now || head > now + 0.2) audioHeadRef.current = now + 0.06;
+    const when = audioHeadRef.current;
+    const buf = ctx.createBuffer(1, pcm.length, rate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) data[i] = pcm[i] / 32768;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(when);
+    audioHeadRef.current = when + pcm.length / rate;
+  };
+  const playChunkRef = useRef(playChunk);
+  playChunkRef.current = playChunk;
 
-  // Drain the queue into the AudioContext while playing.
   useEffect(() => {
     if (!audioPlaying) return;
-    const tick = setInterval(() => {
-      const ctx = audioCtxRef.current;
-      // Suspended context freezes currentTime while chunks keep arriving —
-      // scheduling against that clock builds a seconds-long backlog that
-      // plays late the moment audio finally unlocks. Don't schedule at all
-      // until the context is actually running.
-      if (!ctx || ctx.state !== "running") {
-        audioQueueRef.current = [];
-        audioHeadRef.current = 0;
-        return;
+    let stop = false;
+    let lastSeq = 0;
+    // Long-poll the localhost audio server: the Rust side holds the newest
+    // chunk and waits for a newer one, so each response carries a fresh 20ms
+    // frame ~20ms after it exists. Replaces the old push event (whose JSON
+    // encoding of 960 numbers per chunk was the stutter) and the old 100ms
+    // drain timer (which quantized latency) in one loop.
+    const AUDIO_URL = "http://127.0.0.1:7920/audio.pcm";
+    const loop = async () => {
+      while (!stop) {
+        if (!readPreferences().audio || !audioPlayingRef.current) break;
+        try {
+          const r = await fetch(`${AUDIO_URL}?seq=${lastSeq}`, { cache: "no-store" });
+          if (r.status === 204) continue; // long-poll timeout: nothing new
+          const seq = Number(r.headers.get("X-Audio-Seq") ?? "0");
+          const rate = Number(r.headers.get("X-Audio-Rate") ?? "0");
+          if (!r.ok || !rate || seq <= lastSeq) continue;
+          lastSeq = seq;
+          const bytes = await r.arrayBuffer();
+          // Round to a whole i16 — Int16Array throws on an odd byteLength.
+          const even = bytes.byteLength - (bytes.byteLength % 2);
+          if (even >= 2) playChunkRef.current(rate, new Int16Array(bytes, 0, even / 2));
+        } catch { await new Promise(res => setTimeout(res, 100)); }
       }
-      // Catch-up guard: if the schedule head drifted >0.5s ahead of the wall
-      // clock (bursty LAN delivery), snap it back — live audio must stay
-      // live; a 2s echo of what just happened on the phone is useless.
-      if (audioHeadRef.current > ctx.currentTime + 0.5) {
-        audioHeadRef.current = ctx.currentTime + 0.02;
-        if (audioQueueRef.current.length > 3) audioQueueRef.current.splice(0, audioQueueRef.current.length - 2);
-      }
-      while (audioQueueRef.current.length) {
-        const item = audioQueueRef.current.shift()!;
-        const when = Math.max(ctx.currentTime + 0.02, audioHeadRef.current);
-        const buf = ctx.createBuffer(1, item.pcm.length, item.rate);
-        const data = buf.getChannelData(0);
-        for (let i = 0; i < item.pcm.length; i++) data[i] = item.pcm[i] / 32768;
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.connect(ctx.destination);
-        src.start(when);
-        audioHeadRef.current = when + item.pcm.length / item.rate;
-      }
-    }, 100);
-    return () => clearInterval(tick);
+    };
+    void loop();
+    return () => { stop = true; };
   }, [audioPlaying]);
 
   // Mirror start/stop + disconnect drive the phone's audio capture — the
@@ -308,7 +314,6 @@ export default function App() {
   const stopAudio = async () => {
     try { await api.invoke("audio_stop"); } catch { /* link may be gone */ }
     setAudioPlaying(false);
-    audioQueueRef.current = [];
     audioHeadRef.current = 0;
   };
 
@@ -346,7 +351,7 @@ export default function App() {
       if (ev.t === "log" && typeof ev.d.msg === "string") {
         const msg = ev.d.msg;
         if (msg.startsWith("Audio unavailable:") || msg === "screen permission required for audio capture" || msg === "audio capture needs Android 10+") {
-          setAudioPlaying(false); audioQueueRef.current = []; toast(msg, "err");
+          setAudioPlaying(false); toast(msg, "err");
         }
       } else if (ev.t === "battery") {
         setBattery({ pct: ev.d.pct as number, charging: ev.d.charging as boolean });
@@ -761,7 +766,6 @@ function ScreenView(props: ShellProps) {
   const [frame, setFrame] = useState<string | null>(null);
   const [rotated, setRotated] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [zoom,setZoom]=useState(1);
   const [fill,setFill]=useState(false);
   const [onTop,setOnTop]=useState(false);
   const toggleTop=async()=>{try {const {getCurrentWindow}=await import('@tauri-apps/api/window');const win=getCurrentWindow();const next=!(await win.isAlwaysOnTop());await win.setAlwaysOnTop(next);setOnTop(next);}catch(e){toast(String(e),'err');}};
@@ -1032,9 +1036,7 @@ function ScreenView(props: ShellProps) {
       <div className="comfort-row">
         <button className="btn sm" aria-pressed={!fill} onClick={()=>setFill(false)}>{extra(lang,'fit')}</button>
         <button className="btn sm" aria-pressed={fill} onClick={()=>setFill(true)}>{extra(lang,'fill')}</button>
-        <label>{extra(lang,'zoom')} <input aria-label={extra(lang,'zoom')} type="range" min="1" max="3" step="0.1" value={zoom} onChange={e=>setZoom(Number(e.target.value))}/>{zoom.toFixed(1)}×</label>
         <button className="btn sm" aria-pressed={onTop} onClick={()=>void toggleTop()}>{extra(lang,'top')}</button>
-        <button className="btn sm" disabled={!link.connected} onClick={()=>void stop()}>{extra(lang,'stopCapture')}</button>
       </div>
       <div className="screen-body">
       <aside className="screen-rail">
@@ -1079,7 +1081,7 @@ function ScreenView(props: ShellProps) {
         >
           {frame || frameArrived.current ? (
             <div className="tap-layer">
-              <img ref={imgRef} src={frame ?? undefined} alt="phone screen" draggable={false} style={{transform:`scale(${zoom})`,...(fill?{width:'100%',height:'100%',objectFit:'cover' as const}: {})}} />
+              <img ref={imgRef} src={frame ?? undefined} alt="phone screen" draggable={false} style={fill?{width:'100%',height:'100%',objectFit:'cover' as const}: {}} />
             </div>
           ) : link.connected ? (
             <div className="no-signal">

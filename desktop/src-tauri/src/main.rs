@@ -558,17 +558,17 @@ async fn run_link(
                                 st.frame_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                        // Audio chunk (b"LF1" + header + PCM i16 LE): forward PCM to player.
+                        // Audio chunk (b"LA1" + header + PCM i16 LE): forward PCM to player.
+                        // Raw bytes over the localhost audio server, NOT a Tauri
+                        // event: at 48 kHz a 20ms chunk is 960 samples, and
+                        // JSON-encoding that many numbers per chunk (plus the
+                        // bridge's own overhead) is what made the audio stutter.
                         if let Some((rate, chans, count, samples)) = lynko_core::parse_audio_chunk(&bin) {
-                            use tauri::Manager;
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.emit("audio_chunk", serde_json::json!({
-                                    "rate": rate,
-                                    "chans": chans,
-                                    "count": count,
-                                    "pcm": samples,
-                                }));
+                            let mut body = Vec::with_capacity(samples.len() * 2);
+                            for s in samples {
+                                body.extend_from_slice(&s.to_le_bytes());
                             }
+                            audio_server::push(rate, chans, body);
                         }
                     }
                 }
@@ -1350,6 +1350,119 @@ fn start_frame_server(app: tauri::AppHandle) {
     });
 }
 
+/// Newest audio chunk as raw PCM (GET http://127.0.0.1:7920/audio.pcm).
+///
+/// Same localhost-native pattern as the frame server: the frontend fetches
+/// raw i16 LE bytes (no Tauri bridge, no JSON-per-sample) and schedules them
+/// on arrival. Only the latest chunk is held, so a slow renderer can never
+/// build a backlog of stale audio. The X-Audio-Seq header exposes rate +
+/// channel count + sequence so the player can re-sync without parsing bytes.
+mod audio_server {
+    use std::sync::{Mutex, OnceLock};
+    use tauri::Emitter;
+
+    struct Slot {
+        seq: u64,
+        rate: u16,
+        chans: u16,
+        bytes: Vec<u8>,
+    }
+
+    static LATEST: OnceLock<Mutex<Slot>> = OnceLock::new();
+
+    fn slot() -> &'static Mutex<Slot> {
+        LATEST.get_or_init(|| {
+            Mutex::new(Slot {
+                seq: 0,
+                rate: 0,
+                chans: 0,
+                bytes: Vec::new(),
+            })
+        })
+    }
+
+    /// Called on the link thread for every audio chunk (20ms @ 48kHz).
+    /// Steals the newest chunk; older ones are simply overwritten.
+    pub fn push(rate: u16, chans: u16, pcm_bytes: Vec<u8>) {
+        if let Ok(mut s) = slot().lock() {
+            s.seq += 1;
+            s.rate = rate;
+            s.chans = chans;
+            s.bytes = pcm_bytes;
+        }
+    }
+
+    fn hdr(name: &[u8], value: &[u8]) -> tiny_http::Header {
+        tiny_http::Header::from_bytes(name, value).unwrap()
+    }
+
+    /// Serve the newest chunk. `?seq=<n>` long-polls: when the client already
+    /// has the current chunk, wait (max 500ms) for a newer one instead of
+    /// returning 204 immediately — this replaces the desktop's old poll timer
+    /// and drops idle fetch traffic to zero.
+    pub fn start(handle: tauri::AppHandle) {
+        std::thread::spawn(move || {
+            let server = match tiny_http::Server::http("127.0.0.1:7920") {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = handle.emit(
+                        "log",
+                        serde_json::json!({ "msg": format!("audio server failed to bind: {e}") }),
+                    );
+                    return;
+                }
+            };
+            let _ = handle.emit(
+                "log",
+                serde_json::json!({ "msg": "audio server on http://127.0.0.1:7920/audio.pcm" }),
+            );
+            for req in server.incoming_requests() {
+                let want: u64 = req
+                    .url()
+                    .split("seq=")
+                    .nth(1)
+                    .and_then(|s| s.split('&').next().and_then(|n| n.parse().ok()))
+                    .unwrap_or(0);
+                // Long-poll for a newer chunk; bail fast so restarts and stops
+                // don't hang the loop.
+                let mut waited = 0u32;
+                let (seq, rate, chans, bytes) = loop {
+                    let (s, r, c, b) = {
+                        let g = match slot().lock() {
+                            Ok(g) => g,
+                            Err(_) => break (0, 0, 0, Vec::new()),
+                        };
+                        (g.seq, g.rate, g.chans, g.bytes.clone())
+                    };
+                    if s > want || waited >= 50 {
+                        break (s, r, c, b);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    waited += 1;
+                };
+                let resp = if seq == 0 || bytes.is_empty() {
+                    tiny_http::Response::from_data(Vec::new())
+                        .with_status_code(204)
+                        .with_header(hdr(b"Access-Control-Allow-Origin", b"*"))
+                } else {
+                    tiny_http::Response::from_data(bytes)
+                        .with_header(hdr(b"Content-Type", b"application/octet-stream"))
+                        .with_header(hdr(b"Cache-Control", b"no-store"))
+                        .with_header(hdr(b"Access-Control-Allow-Origin", b"*"))
+                        .with_header(hdr(
+                            b"Access-Control-Expose-Headers",
+                            b"X-Audio-Seq, X-Audio-Rate, X-Audio-Chans",
+                        ))
+                        .with_header(hdr(b"X-Audio-Seq", seq.to_string().as_bytes()))
+                        .with_header(hdr(b"X-Audio-Rate", rate.to_string().as_bytes()))
+                        .with_header(hdr(b"X-Audio-Chans", chans.to_string().as_bytes()))
+                };
+                let _ = req.respond(resp);
+            }
+        });
+    }
+}
+
 /// Transfer PIN (LocalSend spec `?pin=` on prepare calls), set from Settings.
 /// None = transfers need no PIN.
 fn pin() -> Option<String> {
@@ -1449,6 +1562,7 @@ fn main() {
             start_discovery(handle.clone());
             start_usb_watch(handle.clone());
             start_frame_server(handle.clone());
+            audio_server::start(handle.clone());
             transfer_receive::start(handle.clone());
             Ok(())
         })

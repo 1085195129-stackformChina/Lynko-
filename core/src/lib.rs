@@ -449,22 +449,21 @@ mod tests {
     }
 
     /// Regression: audio used to be framed `LF1`, the file-chunk magic that
-    /// `decode_frame` claims first. A 16 kHz chunk has low rate byte 128, so
-    /// `len > 4 + 128` held and every audio frame decoded as a file chunk with
-    /// a garbage id — the audio branch was unreachable. Distinct magic fixes it.
+    /// `decode_frame` claims first. The sample rate's low byte then acted as
+    /// an id length, so every audio frame decoded as a file chunk with a
+    /// garbage id — the audio branch was unreachable. Distinct magic fixes it.
     #[test]
     fn audio_frame_is_not_mistaken_for_a_file_chunk() {
-        let samples: Vec<i16> = (0..1600).map(|i| (i % 300) as i16).collect();
-        let frame = encode_audio(16000, 1, &samples);
+        let samples: Vec<i16> = (0..960).map(|i| (i % 300) as i16).collect();
+        let frame = encode_audio(48000, 1, &samples);
 
         assert_eq!(&frame[..3], AUDIO_MAGIC);
         assert!(&frame[..3] != CHUNK_MAGIC);
-        // Not a file chunk: id_len byte 128 would overrun a 100ms (3211-byte) frame,
-        // and a full 900ms frame would decode to a 128-byte garbage id.
+        // Must not decode as a file chunk — see the regression above.
         assert!(matches!(decode_frame(&frame), DecodedFrame::Text));
 
         let (rate, chans, count, pcm) = parse_audio_chunk(&frame).expect("parses as audio");
-        assert_eq!((rate, chans, count), (16000, 1, 1600));
+        assert_eq!((rate, chans, count), (48000, 1, 960));
         assert_eq!(pcm, samples);
     }
 

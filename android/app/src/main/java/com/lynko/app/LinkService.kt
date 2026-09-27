@@ -848,7 +848,11 @@ class LinkService : Service() {
         screenSession.set(session)
         acquireWifiLowLatency()
         acquireScreenWakeLock()
-        // Leave media volume unchanged; muting it can silence playback capture.
+        // Mute the phone speaker so playback is heard ONLY on the desktop.
+        // AudioPlaybackCapture taps the pipeline BEFORE the volume stage, so
+        // this does NOT silence the captured stream — the old comment claiming
+        // otherwise was wrong and left the phone playing out of both ends.
+        PhoneAudio.muteForMirror(applicationContext)
         sendEvent(conn, "log", JSONObject().put("msg", "screen streaming"))
     }
 
@@ -974,7 +978,7 @@ class LinkService : Service() {
         screenSession.set(session)
         acquireWifiLowLatency()
         acquireScreenWakeLock()
-        // Leave media volume unchanged; muting it can silence playback capture.
+        PhoneAudio.muteForMirror(applicationContext)
         Log.i(TAG, "local mirror streaming")
     }
 
