@@ -97,6 +97,13 @@ object VpnGuard {
         vpnCallback = object : NetworkCallback() {
             override fun onAvailable(network: Network) { repin("vpn-up") }
             override fun onLost(network: Network) { repin("vpn-down") }
+            // A re-keyed / re-profiled VPN network (many clients rebuild tun0
+            // on connect instead of losing it) only reports capability
+            // changes. Without this the guard sleeps through the toggle and
+            // the link never recovers.
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                repin("vpn-caps")
+            }
         }
         try {
             cm.registerNetworkCallback(vpnRequest, vpnCallback!!)
@@ -140,12 +147,15 @@ object VpnGuard {
     }
 
     private fun bind(network: Network, why: String) {
-        val changed = bound != null && bound != network
         if (bound == network) {
-            // Force the rebind anyway: when the user toggles the VPN mid-mirror
-            // Android silently re-routes the process to the tunnel even though
-            // the "bound" handle is unchanged — without this the WS to the PC
-            // dies (mirror freezes) and auto-reconnects from the VPN address.
+            // Same handle. When the user toggles the VPN mid-mirror Android
+            // silently re-routes the process to the tunnel even though the
+            // Wi-Fi Network object is unchanged. bindProcessToNetwork alone is
+            // NOT enough: the already-bound LISTENING sockets keep their old
+            // network binding, so the desktop's SYN gets no answer at all
+            // (SYN_SENT forever) and the link can never recover. The servers
+            // must be recreated — see repin(), which is the VPN path that does
+            // it unconditionally.
             try {
                 cm?.bindProcessToNetwork(network)
                 Log.i(TAG, "process re-bound to physical Wi-Fi ($why, same handle)")
@@ -154,13 +164,14 @@ object VpnGuard {
             }
             return
         }
+        val firstBind = bound == null
         bound = network
         try {
             cm?.bindProcessToNetwork(network)
             Log.i(TAG, "process bound to physical Wi-Fi ($why)")
             // Sockets created BEFORE the bind keep their old route — the
             // server sockets must be recreated or the VPN still owns them.
-            if (changed) onRebind?.invoke(network)
+            if (firstBind) onRebind?.invoke(network)
         } catch (e: Exception) {
             Log.w(TAG, "bindProcessToNetwork($why) failed: ${e.message}")
         }
