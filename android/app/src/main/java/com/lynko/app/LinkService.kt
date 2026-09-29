@@ -252,6 +252,14 @@ class LinkService : Service() {
      *  rebinds (VPN toggle, WLAN rejoin) after the old listeners are torn down. */
     private fun startServers() {
         startPairAndTransferServers()
+        // Same trap as pairing: Java-WebSocket binds on ITS own thread, an
+        // EADDRINUSE there is uncaught → process death, and the local
+        // try/catch in scheduleLinkRebind never sees it (bind is async).
+        if (!awaitPortFree(LINK_PORT)) {
+            Log.e(TAG, "port $LINK_PORT still busy — link listener NOT started")
+            scheduleLinkRebind()
+            return
+        }
         linkServer = LinkServer(LINK_PORT).also {
             // Screen+audio bursts can exceed the default 60s idle window on
             // slow links; widen it so the server never drops a live desktop.
@@ -277,8 +285,26 @@ class LinkService : Service() {
     /** Pairing + transfer servers only — called from VPN rebind so the live
      *  link server (and its WebSocket connection) is never killed mid-mirror. */
     private fun startPairAndTransferServers() {
-        pairingServer = PairingServer(PAIR_PORT)
-        pairingServer?.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+        // Always drop the previous instances first: NanoHTTPD.stop() is
+        // asynchronous, so a blind replacement races the old socket and the
+        // bind fails on the server's own thread — where EADDRINUSE is an
+        // uncaught exception that kills the whole app (logcat: "Unable to
+        // create service LinkService: BindException").
+        try { pairingServer?.stop() } catch (_: Exception) {}
+        try { transferServer?.stop() } catch (_: Exception) {}
+        pairingServer = null
+        transferServer = null
+        if (!awaitPortFree(PAIR_PORT)) {
+            Log.e(TAG, "port $PAIR_PORT still busy after wait — pairing server NOT started")
+        } else {
+            val ps = PairingServer(PAIR_PORT)
+            pairingServer = ps
+            ps.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+        }
+        if (!awaitPortFree(TransferServer.DEFAULT_PORT)) {
+            Log.e(TAG, "port ${TransferServer.DEFAULT_PORT} still busy — transfer server NOT started")
+            return
+        }
         // LocalSend Protocol v2.2 receive server — exact official endpoints
         // under /api/localsend/v2/* (prepare-upload / upload / cancel /
         // prepare-download / download / register / info).
@@ -322,6 +348,25 @@ class LinkService : Service() {
         ).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true) }
     }
 
+    /** Probe a port until it is bindable (max ~1s). The holder in practice is
+     *  the instance we just stopped — stop() closes its socket asynchronously,
+     *  so a moment of patience replaces a whole-app crash. Returns false when
+     *  still busy; the caller skips the server instead of dying. */
+    private fun awaitPortFree(port: Int): Boolean {
+        repeat(20) {
+            try {
+                java.net.ServerSocket().use { ss ->
+                    ss.reuseAddress = true
+                    ss.bind(java.net.InetSocketAddress("0.0.0.0", port))
+                    return true
+                }
+            } catch (_: Exception) {
+                try { Thread.sleep(50) } catch (_: InterruptedException) { return false }
+            }
+        }
+        return false
+    }
+
     /** VpnGuard rebind: network topology changed (VPN up/down, WLAN rejoin).
      *  ALL server sockets must be recreated — Android reroutes the old listen
      *  sockets to tun0 when VPN starts, so new desktop SYNs hit the tunnel
@@ -331,13 +376,28 @@ class LinkService : Service() {
      *  longer stops it — so frames resume on the new connection with zero
      *  consent dialog. */
     private fun restartServers() {
+        // VpnGuard fires on every VPN/WLAN capability change; restarting
+        // twice in a row only races the previous stop() (see awaitPortFree)
+        // and needlessly kills the live WS. One restart serves all of them —
+        // it reads the current network at start time.
+        val now = System.currentTimeMillis()
+        if (now - lastRestartAt < 1500L) { Log.i(TAG, "restart debounced"); return }
+        lastRestartAt = now
         Log.i(TAG, "vpn rebind: restarting all servers on physical Wi-Fi")
-        try { pairingServer?.stop() } catch (_: Exception) {}
-        try { transferServer?.stop() } catch (_: Exception) {}
-        try { linkServer?.stop() } catch (_: Exception) {}
-        startServers()
-        advertise()
+        // Background: awaitPortFree may sleep up to ~1s and WS stop() blocks —
+        // neither belongs on the main thread (VpnGuard callbacks land there).
+        Thread {
+            try { pairingServer?.stop() } catch (_: Exception) {}
+            try { transferServer?.stop() } catch (_: Exception) {}
+            try { linkServer?.stop() } catch (_: Exception) {}
+            pairingServer = null
+            transferServer = null
+            linkServer = null
+            startServers()
+            advertise()
+        }.start()
     }
+    @Volatile private var lastRestartAt = 0L
 
     /** Self-heal for a dead 7913 listener: recreate + rebind with backoff
      *  (max ~2min total), then give up loudly. Runs off the main thread —
