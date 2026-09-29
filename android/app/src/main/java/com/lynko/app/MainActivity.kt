@@ -279,11 +279,13 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         ShareSender.onChange = null
+        LynkoAccessibilityService.onChange = null
     }
 
     override fun onResume() {
         super.onResume()
         ShareSender.onChange = { screenTab.render() }
+        LynkoAccessibilityService.onChange = { renderPerms() }
         screenTab.render()
         readShareIntent()
         if (intent.getBooleanExtra("request_mirror_consent", false)) {
@@ -304,10 +306,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginStart() {
-        // Accessibility is REQUIRED for taps/swipes/typing. Check both the
-        // Settings string AND live binding: MIUI can leave the string intact
-        // while the service is dead (malfunctioning) — operational() covers
-        // that case so the user is nudged to toggle off→on.
+        // Accessibility is REQUIRED for taps/swipes/typing. Check the Settings
+        // string only — MIUI unbinds the service whenever the app is
+        // backgrounded, so the live binding is null on every relaunch while
+        // the grant is still intact. Gating on it sent the user into settings
+        // to toggle off→on on every single launch; the system rebinds on its
+        // own within seconds of the process starting.
         if (!LynkoAccessibilityService.operational(this)) {
             Toast.makeText(this, Loc.t("phone", "perm_a11y_needed"), Toast.LENGTH_LONG).show()
             openAccessibilitySettings()
@@ -392,12 +396,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Checklist rows flip from • (todo) to ✓ (granted) as the user grants them. */
     private fun renderPerms() {
-        // Check the LIVE binding, not the stored setting. MIUI's settings
-        // screen happily shows Lynko "On" while enabled_accessibility_services
-        // is null and nothing is bound — the exact stale state that made taps
-        // silently dead. instance != null means the service is actually
-        // running, which is the only thing that matters for dispatchGesture.
-        val a11yOk = LynkoAccessibilityService.instance != null
+        // Check the PERMISSION (Settings string), not the live binding: MIUI
+        // unbinds the service on backgrounding, so instance==null on every
+        // relaunch while the grant is still intact — checking instance told
+        // every user to toggle the service off→on on each app open. The
+        // checklist re-renders via LynkoAccessibilityService.onChange when the
+        // system actually (re)binds.
+        val a11yOk = LynkoAccessibilityService.enabled(this)
         val notifOk = if (Build.VERSION.SDK_INT >= 24) {
             androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this)
                 .contains(packageName)

@@ -22,6 +22,12 @@ class LynkoAccessibilityService : AccessibilityService() {
         var instance: LynkoAccessibilityService? = null
             private set
 
+        /** Set by the UI to re-render the permission checklist whenever the
+         *  system (re)binds or drops the service — the row would otherwise sit
+         *  amber until some unrelated state change. */
+        @Volatile
+        var onChange: (() -> Unit)? = null
+
         fun enabled(ctx: Context): Boolean {
             val expected = ctx.packageName + "/" + LynkoAccessibilityService::class.java.canonicalName
             val enabled = android.provider.Settings.Secure.getString(
@@ -30,21 +36,27 @@ class LynkoAccessibilityService : AccessibilityService() {
             return enabled.split(":").any { it.equals(expected, ignoreCase = true) }
         }
 
-        /** Fully operational: listed in Settings AND the service is actually
-         *  bound (instance != null). MIUI leaves the Settings string intact
-         *  after a force-stop while the service itself is dead — the exact
-         *  state where taps are silently swallowed. */
-        fun operational(ctx: Context): Boolean = instance != null && enabled(ctx)
+        /** Whether taps can be delivered.
+         *
+         *  Trusts the Settings string, NOT the live binding. MIUI unbinds the
+         *  service when the app is backgrounded, so `instance` is null on every
+         *  relaunch even though the permission is still granted — requiring it
+         *  sent the user to settings to toggle off→on every single launch.
+         *  The system rebinds on its own (logcat: "accessibility service
+         *  connected"), so a null instance is not a reason to block. */
+        fun operational(ctx: Context): Boolean = enabled(ctx)
     }
 
     override fun onServiceConnected() {
         instance = this
         Log.i("lynko", "accessibility service connected")
+        onChange?.invoke()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
         Log.i("lynko", "accessibility service unbound")
+        onChange?.invoke()
         return super.onUnbind(intent)
     }
 
