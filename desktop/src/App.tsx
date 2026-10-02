@@ -150,7 +150,14 @@ export default function App() {
     const saved = localStorage.getItem("lynko-lang");
     return saved === "fa" || saved === "en" ? saved : (navigator.language || "").startsWith("fa") ? "fa" : "en";
   });
-  useEffect(() => { localStorage.setItem("lynko-lang", lang); document.documentElement.lang = lang; }, [lang]);
+  useEffect(() => {
+    localStorage.setItem("lynko-lang", lang);
+    document.documentElement.lang = lang;
+    // dir is what actually mirrors the UI. lang alone only sets the locale for
+    // font selection and :lang() rules — without dir every LTR-only CSS
+    // (flex row order, text-align:left, margin-left) stays left-to-right.
+    document.documentElement.dir = lang === "fa" ? "rtl" : "ltr";
+  }, [lang]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [link, setLink] = useState<LinkState>({ connected: false });
   const [battery, setBattery] = useState<BatteryState | null>(null);
