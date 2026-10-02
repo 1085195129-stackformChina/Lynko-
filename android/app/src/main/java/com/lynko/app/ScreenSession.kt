@@ -93,15 +93,18 @@ class ScreenSession(
     private val baos = ByteArrayOutputStream(256 * 1024)
 
     /** Backpressure feedback from LinkService: when frames are being dropped
-     * on the send side, step JPEG quality down (floor 50) until the link
-     * drains; recover slowly when frames go through again. */
+     *  on the send side, step JPEG quality down until the link drains.
+     *
+     *  Deliberately does NOT touch frameIntervalMs. Slowing the pacing looked
+     *  like congestion control but it IS the "back and forth": a drop pushed
+     *  the rate 33→66ms (15fps) and noteClean only gave back 6ms per SECOND,
+     *  so the mirror visibly pumped between 30 and 15fps for seconds after
+     *  every burst. Dropping a frame is already free — the link is
+     *  latest-wins, nothing queues — so the only lever that actually
+     *  reduces bytes (and therefore drops) is the encoder. */
     fun noteDrop() {
         drops++
-        // Back off pacing immediately — a dropped frame means the link is
-        // congested; sending the next one sooner only queues it behind the
-        // backlog. Steps 33→40→50→66ms, floors at 15fps.
-        if (frameIntervalMs < 66L) frameIntervalMs = (frameIntervalMs + 10L).coerceAtMost(66L)
-        if (drops % 3 == 0 && jpegQuality > 40) jpegQuality -= 10
+        if (drops % 2 == 0 && jpegQuality > 50) jpegQuality -= 10
     }
 
     /** JPEG quality ceiling: the desktop's preset wins, otherwise the
