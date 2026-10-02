@@ -771,6 +771,11 @@ function ScreenView(props: ShellProps) {
   const toggleTop=async()=>{try {const {getCurrentWindow}=await import('@tauri-apps/api/window');const win=getCurrentWindow();const next=!(await win.isAlwaysOnTop());await win.setAlwaysOnTop(next);setOnTop(next);}catch(e){toast(String(e),'err');}};
   useEffect(()=>{setStreaming(Boolean(link.connected && link.mirror));if(!link.mirror || !props.prefs.screen){setFrame(null);frameArrived.current=false;}},[link.connected,link.mirror,props.prefs.screen]);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const paintRef = useRef<HTMLCanvasElement | null>(null);
+  // Phone resolution, kept outside the bitmap: the tap mapper (norm) needs
+  // iw/ih to hit-test, and reading them off the <img> cost a layout read on
+  // every pointer event.
+  const intrRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragging = useRef(false);
   const lastMove = useRef({ x: 0, y: 0 });
@@ -836,13 +841,11 @@ function ScreenView(props: ShellProps) {
   };
 
   // subscribe to JPEG frames from the Rust link layer.
-  // Direct <img>.src writes — NOT React state: setState at 15fps re-renders
-  // the whole component tree per frame; a direct assignment paints the
-  // moment the frame arrives and skips reconciliation entirely.
-  const imgRef = useRef<HTMLImageElement | null>(null);
+  // Direct canvas paints — NOT React state: setState per frame re-renders the
+  // whole component tree; drawImage paints the moment the bitmap is decoded.
   const frameArrived = useRef(false);
-  // Link-drop cleanup: when the link dies, the <img> keeps painting the
-  // LAST frozen frame — a stale screenshot that looks like a live mirror.
+  // Link-drop cleanup: when the link dies, the canvas keeps painting the LAST
+  // frozen frame — a stale screenshot that looks like a live mirror.
   // Subscribe to link_state and clear the frame state so the canvas falls
   // back to its no-signal states instead of lying. (FPS is counted at App
   // level for the footer — no local tick here.)
@@ -857,15 +860,6 @@ function ScreenView(props: ShellProps) {
     const FRAME_URL = "http://127.0.0.1:7919/frame.jpg";
     let lastSeq = -1;
     let stop = false;
-    // Blob URLs MUST be tracked in one place: unrevoked 24KB blobs at 15fps
-    // kill the WebView renderer in ~1h (white screen). Two leak paths here:
-    // the no-ref branch (setFrame called every frame) and a fresh mount
-    // inheriting el.dataset.blobUrl from a prior effect run.
-    let liveUrl: string | null = null;
-    const setLiveUrl = (url: string | null) => {
-      if (liveUrl && liveUrl !== url) URL.revokeObjectURL(liveUrl);
-      liveUrl = url;
-    };
     const tick = async () => {
       if (stop) return;
       if (!readPreferences().screen) { setTimeout(tick, 250); return; }
@@ -876,20 +870,43 @@ function ScreenView(props: ShellProps) {
           if (seq !== lastSeq) {
             lastSeq = seq;
             const blob = await r.blob();
-            const url = URL.createObjectURL(blob);
-            const el = imgRef.current;
-            if (el) {
-              el.src = url;
-            } else if (!frameArrived.current) {
-              frameArrived.current = true;
-              setFrame(url);
+            // createImageBitmap decodes OFF the main thread and resolves
+            // async. createObjectURL + <img>.src made the WebView decode and
+            // paint on the main thread, so each frame stalled the input
+            // handlers and the picture landed a frame or two late.
+            let bmp: ImageBitmap;
+            try {
+              bmp = await createImageBitmap(blob);
+            } catch {
+              setTimeout(tick, 16);
+              return;
             }
-            // After the new frame is in use, free the previous blob.
-            setLiveUrl(url);
+            const el = paintRef.current;
+            if (el) {
+              // Resize only when it actually changes: assigning width/height
+              // every frame clears the canvas and reallocates its buffer.
+              if (el.width !== bmp.width || el.height !== bmp.height) {
+                el.width = bmp.width;
+                el.height = bmp.height;
+                intrRef.current = { w: bmp.width, h: bmp.height };
+              }
+              const ctx = el.getContext("2d");
+              if (ctx) { ctx.drawImage(bmp, 0, 0); bmp.close(); }
+            } else {
+              bmp.close();
+            }
+            if (!frameArrived.current) {
+              frameArrived.current = true;
+              // one state flip, to swap the placeholder for the canvas
+              setFrame("canvas");
+            }
           }
         }
       } catch { /* server not up yet */ }
-      setTimeout(tick, 16);
+      // The fetch+decode above is already the rate limiter; the old 16ms
+      // timer on top of it added a full poll period of dead time before the
+      // NEXT request went out.
+      setTimeout(tick, 0);
     };
     tick();
     const un2Promise = api.on<LinkState>("link_state", (e) => {
@@ -900,11 +917,9 @@ function ScreenView(props: ShellProps) {
       }
     });
     return () => {
-      // Kill the poller + free the last blob: without this, every remount
-      // (dev HMR, strict-mode double-invoke) stacks another 16ms loop and
-      // the last 24KB blob stays resident forever.
+      // Kill the poller: without this, every remount (dev HMR, strict-mode
+      // double-invoke) stacks another fetch loop that keeps painting.
       stop = true;
-      setLiveUrl(null);
       un?.();
       void un2Promise.then((u) => u?.());
     };
@@ -956,10 +971,9 @@ function ScreenView(props: ShellProps) {
     // the largest centered rect with the bitmap's aspect ratio that fits in
     // the element box, then normalize against THAT. Zoom scales the bitmap
     // around the canvas center, so the same math applies at any zoom.
-    const img = imgRef.current;
     const el = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-    const iw = img?.naturalWidth || el.width;
-    const ih = img?.naturalHeight || el.height;
+    const iw = intrRef.current.w || el.width;
+    const ih = intrRef.current.h || el.height;
     const scale = Math.min(el.width / iw, el.height / ih) * (fill ? Math.max(el.width / iw, el.height / ih) : 1);
     const w = iw * scale, h = ih * scale;
     const left = el.left + (el.width - w) / 2, top = el.top + (el.height - h) / 2;
@@ -1081,7 +1095,17 @@ function ScreenView(props: ShellProps) {
         >
           {frame || frameArrived.current ? (
             <div className="tap-layer">
-              <img ref={imgRef} src={frame ?? undefined} alt="phone screen" draggable={false} style={fill?{width:'100%',height:'100%',objectFit:'cover' as const}: {}} />
+              {/* A canvas has no object-fit: its bitmap stretches to the
+                  element box. contain = keep the intrinsic aspect and fit
+                  inside (max-*); fill = stretch to cover, the old crop. */}
+              <canvas
+                ref={paintRef}
+                className="paint"
+                draggable={false}
+                style={fill
+                  ? { width: "100%", height: "100%" }
+                  : { maxWidth: "100%", maxHeight: "100%" }}
+              />
             </div>
           ) : link.connected ? (
             <div className="no-signal">

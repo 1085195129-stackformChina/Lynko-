@@ -889,11 +889,16 @@ input.field:focus {
   height: 100%;
 }
 
-.screen-canvas img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+/* The mirror paints into a <canvas>. object-fit does NOT apply to canvas
+   content — the bitmap stretches to the element box, so the box is sized in
+   JS instead: max-width/height 100% keeps the intrinsic aspect (contain),
+   explicit 100%/100% stretches it (fill/crop). Absolute + margin:auto
+   centers the letterboxed canvas inside the full-bleed tap layer. */
+.screen-canvas canvas.paint {
   display: block;
+  position: absolute;
+  inset: 0;
+  margin: auto;
 }
 
 .screen-canvas.rotated { aspect-ratio: 20 / 9; height: auto; width: 100%; max-height: 100%; align-self: center; }
