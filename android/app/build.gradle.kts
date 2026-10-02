@@ -34,18 +34,6 @@ android {
             dimension = "store"
             isDefault = true
         }
-        create("bazaar") {
-            dimension = "store"
-            applicationId = "com.lynko.app.bazaar"
-        }
-        create("myket") {
-            dimension = "store"
-            applicationId = "com.lynko.app.myket"
-        }
-        create("play") {
-            dimension = "store"
-            applicationId = "com.lynko.app.play"
-        }
     }
 
     // Release signing from env (CI). Without a keystore we fall back to the

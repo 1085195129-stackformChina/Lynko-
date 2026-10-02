@@ -18,17 +18,48 @@ permissions:
 
 jobs:
   # ────────────────────────────────────────────────────────────────────
-  # Android — 4 store flavors × (universal, arm64-v8a, armeabi-v7a, x86_64)
+  # One version for every platform. A tag v* is authoritative (0.1.2 →
+  # versionName 0.1.2); a main push gets a date-based continuous build
+  # (0.1.20261002) whose versionCode is the date — monotonic, and
+  # readable in the filename instead of 0.1.<run_number>.
+  # ────────────────────────────────────────────────────────────────────
+  version:
+    name: Compute version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      code: ${{ steps.ver.outputs.code }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"; V="${V%%-*}"
+            CODE=$(echo "$V" | awk -F. '{ printf "%d%03d%03d", $1, $2, $3 }')
+            PRE=false
+          else
+            V="0.1.$(date -u +%Y%m%d)"
+            CODE=$(date -u +%Y%m%d)
+            PRE=true
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Lynko $V (code $CODE)"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Android — universal, arm64-v8a, armeabi-v7a, x86_64
   # Release-signed when ANDROID_KEYSTORE_BASE64 secret exists,
   # otherwise debug-signed (still sideloadable).
   # ────────────────────────────────────────────────────────────────────
   android:
-    name: Android — ${{ matrix.flavor }}
+    name: Android
+    needs: version
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        flavor: [base, bazaar, myket, play]
     steps:
       - uses: actions/checkout@v4
 
@@ -38,23 +69,10 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Compute version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%%-*}"
-            CODE=$(echo "$VERSION" | awk -F. '{ printf "%d%03d%03d", $1, $2, $3 }')
-          else
-            VERSION="0.1.${GITHUB_RUN_NUMBER}"
-            CODE="${GITHUB_RUN_NUMBER}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "code=$CODE" >> "$GITHUB_OUTPUT"
-
       - name: Build release APKs
         working-directory: android
         env:
-          FLAVOR: ${{ matrix.flavor }}
+          FLAVOR: base
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -69,14 +87,14 @@ jobs:
             echo "no keystore secret — falling back to debug signing"
           fi
           ./gradlew "assemble${FLAVOR^}Release" \
-            -PandroidVersionCode=${{ steps.ver.outputs.code }} \
-            -PandroidVersionName=${{ steps.ver.outputs.version }}
+            -PandroidVersionCode=${{ needs.version.outputs.code }} \
+            -PandroidVersionName=${{ needs.version.outputs.version }}
 
       - name: Stage APKs
         working-directory: android
         run: |
-          FLAVOR="${{ matrix.flavor }}"
-          VER="${{ steps.ver.outputs.version }}"
+          FLAVOR="base"
+          VER="${{ needs.version.outputs.version }}"
           DEST="dist-android-$FLAVOR"
           mkdir -p "$DEST"
           find app/build/outputs/apk -name "*-release.apk" | while read -r apk; do
@@ -84,7 +102,7 @@ jobs:
             case "$NAME" in
               app-$FLAVOR-*-release.apk)
                 ABI="${NAME#app-$FLAVOR-}"; ABI="${ABI%-release.apk}"
-                cp "$apk" "$DEST/lynko-$VER-android-$FLAVOR-$ABI.apk"
+                cp "$apk" "$DEST/lynko-$VER-android-$ABI.apk"
                 ;;
             esac
           done
@@ -93,8 +111,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: android-${{ matrix.flavor }}
-          path: android/dist-android-${{ matrix.flavor }}/*.apk
+          name: android
+          path: android/dist-android-base/*.apk
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────────────────
@@ -102,6 +120,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   windows:
     name: Windows — installer + portable
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,21 +138,10 @@ jobs:
       - run: npm ci
         working-directory: desktop
 
-      - name: Compute version
-        id: ver
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%%-*}"
-          else
-            VERSION="0.1.${GITHUB_RUN_NUMBER}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Stamp version
         shell: bash
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          V="${{ needs.version.outputs.version }}"
           node -e "
             const fs=require('fs');
             const p='desktop/src-tauri/tauri.conf.json';
@@ -155,7 +163,7 @@ jobs:
       - name: Assemble portable zip
         shell: bash
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          V="${{ needs.version.outputs.version }}"
           EXE="desktop/src-tauri/target/release/lynko.exe"
           [ -f "$EXE" ] || EXE=$(find desktop/src-tauri/target -name "lynko.exe" -path "*release*" | head -1)
           STAGING="Lynko-$V-windows-x64-portable"
@@ -181,6 +189,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   linux:
     name: Linux — deb/rpm/AppImage
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,19 +222,9 @@ jobs:
       - run: npm ci
         working-directory: desktop
 
-      - name: Compute version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%%-*}"
-          else
-            VERSION="0.1.${GITHUB_RUN_NUMBER}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Stamp version
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          V="${{ needs.version.outputs.version }}"
           node -e "
             const fs=require('fs');
             const p='desktop/src-tauri/tauri.conf.json';
@@ -259,6 +258,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   macos:
     name: macOS — dmg (universal)
+    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -278,19 +278,9 @@ jobs:
       - run: npm ci
         working-directory: desktop
 
-      - name: Compute version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%%-*}"
-          else
-            VERSION="0.1.${GITHUB_RUN_NUMBER}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Stamp version
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          V="${{ needs.version.outputs.version }}"
           node -e "
             const fs=require('fs');
             const p='desktop/src-tauri/tauri.conf.json';
@@ -323,7 +313,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   publish:
     name: Publish release
-    needs: [android, windows, linux, macos]
+    needs: [version, android, windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -351,7 +341,17 @@ jobs:
           gh release delete continuous --yes --cleanup-tag 2>/dev/null || true
           git config user.name "CI Bot"
           git config user.email "ci@lynko.app"
-          SUBJECT=$(git log -1 --format='%s' "$GITHUB_SHA")
+          # GitHub's merge-commit subject is an auto-generated
+          # "Merge pull request #N from …" — useless as a release title.
+          # For merges, the PR title lives in the first line of the body.
+          SUBJ=$(git log -1 --format='%s' "$GITHUB_SHA")
+          case "$SUBJ" in
+            "Merge pull request #"*)
+              SUBJECT=$(git log -1 --format='%b' "$GITHUB_SHA" | head -n1)
+              [ -n "$SUBJECT" ] || SUBJECT="main@$(git rev-parse --short=7 "$GITHUB_SHA")"
+              ;;
+            *) SUBJECT="$SUBJ" ;;
+          esac
           BODY=$(git log -1 --format='%B' "$GITHUB_SHA")
           git tag -f -a continuous -m "$SUBJECT" "$GITHUB_SHA"
           git push origin -f continuous
@@ -361,11 +361,12 @@ jobs:
           git tag -a "$PER" -m "$BODY" "$GITHUB_SHA" 2>/dev/null || true
           git push origin "$PER" 2>/dev/null || true
           gh release create continuous \
-            --latest \
-            --title "Continuous — $SUBJECT" \
+            --prerelease \
+            --title "Lynko ${{ needs.version.outputs.version }} — $SUBJECT" \
             --notes "$BODY
 
-          Build from main @ $GITHUB_SHA. APKs are debug-signed until a release keystore is configured." \
+          Continuous build from main @ $GITHUB_SHA.
+          APKs are debug-signed until a release keystore is configured." \
             flat/*
 
       - name: Publish stable release (tags)

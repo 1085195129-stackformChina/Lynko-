@@ -29,6 +29,13 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Error codes follow the spec table exactly: 204/400/401/403/409/422/429/500.
  */
+/** NanoHTTPD's default socket factory has no SO_REUSEADDR — a stop→start
+ *  within TIME_WAIT then dies with EADDRINUSE (whole-app crash). */
+object LynkoNanoSocketFactory : NanoHTTPD.ServerSocketFactory {
+    override fun create(): java.net.ServerSocket =
+        java.net.ServerSocket().also { it.reuseAddress = true }
+}
+
 class TransferServer(
     private val appContext: Context,
     private val port: Int,

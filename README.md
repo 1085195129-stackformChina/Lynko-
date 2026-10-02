@@ -46,14 +46,11 @@ Grab the latest build from [**Releases**](https://github.com/ErfanBagheri404/Lyn
 | 🪟 **Windows** | `Lynko_x64-setup.exe` (installer) · `.msi` · portable `.zip` |
 | 🐧 **Linux** | `.deb` · `.rpm` · `.AppImage` (portable) |
 | 🍎 **macOS** | Universal `.dmg` (Apple Silicon + Intel) |
-| 🤖 **Android** | `lynko-<flavor>-<abi>.apk` — pick **`universal`** if unsure |
+| 🤖 **Android** | `lynko-android-<abi>.apk` — pick **`universal`** if unsure |
 
-### Android flavors
+### Android
 
-| Flavor | For |
-|---|---|
-| `base` / `play` | Google Play countries |
-| `bazaar` / `myket` | Iran (Café Bazaar / Myket stores) |
+Only the `base` flavor ships for now (store flavors removed — `bazaar`/`myket`/`play` can return later).
 
 ## 🚀 Quick Start
 
