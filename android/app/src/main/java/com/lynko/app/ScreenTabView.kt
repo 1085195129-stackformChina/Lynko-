@@ -97,7 +97,7 @@ class ScreenTabView @JvmOverloads constructor(
             generation.incrementAndGet()
             previewImg.setImageDrawable(null)
             lastBitmap = null
-            fpsText.text = "0 fps"
+            fpsText.text = Loc.t("phone", "fps_preview").replace("{n}", "0")
             resText.text = ""
             frameTimes.clear()
         }
@@ -131,7 +131,7 @@ class ScreenTabView @JvmOverloads constructor(
                     previewHint.visibility = View.GONE
                     frameTimes.addLast(now)
                     while (frameTimes.isNotEmpty() && now - frameTimes.first() > 1000L) frameTimes.removeFirst()
-                    fpsText.text = "${frameTimes.size} preview fps"
+                    fpsText.text = Loc.t("phone", "fps_preview").replace("{n}", frameTimes.size.toString())
                     resText.text = "${bmp.width}×${bmp.height}"
                 } finally { decodeBusy.set(false) }
             }
@@ -146,7 +146,7 @@ class ScreenTabView @JvmOverloads constructor(
             previewImg.setImageDrawable(null)
             lastBitmap = null
             frameTimes.clear()
-            fpsText.text = "0 fps"
+            fpsText.text = Loc.t("phone", "fps_preview").replace("{n}", "0")
             resText.text = ""
         } else render()
     }

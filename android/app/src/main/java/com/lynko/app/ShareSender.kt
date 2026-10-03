@@ -71,7 +71,7 @@ object ShareSender {
                     val st = stage(app, u) ?: error("Cannot open selected file")
                     staged.add(st)
                 }
-                state("share_waiting", if (staged.size == 1) staged[0].name else "${staged.size} files")
+                state("share_waiting", if (staged.size == 1) staged[0].name else Loc.t("phone", "file_count").replace("{n}", staged.size.toString()))
                 val info = JSONObject()
                     .put("alias", alias)
                     .put("version", "2.2")
@@ -103,14 +103,14 @@ object ShareSender {
                     "application/json",
                 )
                 if (code == 204) {
-                    state("share_sent", if (staged.size == 1) staged[0].name else "${staged.size} files")
+                    state("share_sent", if (staged.size == 1) staged[0].name else Loc.t("phone", "file_count").replace("{n}", staged.size.toString()))
                     return@Thread
                 }
                 if (code != 200) error("prepare failed: $code $body")
                 val resp = JSONObject(body)
                 sessionId = resp.getString("sessionId")
                 val tokens = resp.getJSONObject("files")
-                val label = if (staged.size == 1) staged[0].name else "${staged.size} files"
+                val label = if (staged.size == 1) staged[0].name else Loc.t("phone", "file_count").replace("{n}", staged.size.toString())
                 state("share_sending", label)
 
                 // POST /upload?sessionId&fileId&token — one binary POST per file
@@ -132,7 +132,7 @@ object ShareSender {
                 Log.w(TAG, "send failed: ${e.message}")
                 val sid = sessionId
                 if (sid != null) runCatching { httpPost("$base/cancel?sessionId=$sid$pinArg") }
-                state("share_failed", e.message ?: "Transfer failed")
+                state("share_failed", e.message ?: Loc.t("phone", "share_failed"))
             } finally {
                 // Staged cache copies are scratch — drop them all, sent or not,
                 // so a cancelled batch never fills the phone's cache.

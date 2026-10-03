@@ -63,7 +63,19 @@
     "share_declined": "Declined on desktop",
     "share_disconnected": "Desktop disconnected",
     "share_timeout": "Transfer timed out",
-    "share_size_limit": "Choose a local file with known size, up to 1 GB."
+    "share_size_limit": "Choose a local file with known size, up to 1 GB.",
+    "section_signal": "SIGNAL",
+    "section_start": "START",
+    "section_screen": "SCREEN",
+    "transfer_title": "Incoming file",
+    "transfer_body": "{from} wants to send {n} file(s) — {size}. Accept?",
+    "accept": "Accept",
+    "decline": "Decline",
+    "fps_preview": "{n} preview fps",
+    "audio_unavailable": "Audio unavailable: on the phone open Lynko Settings → Allow playback audio, then press Audio again.",
+    "file_count": "{n} files",
+    "peer_desktop": "Desktop",
+    "not_running": "Not running"
   },
   "desktop": {
     "nav_devices": "Devices",

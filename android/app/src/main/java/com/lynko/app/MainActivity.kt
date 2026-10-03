@@ -453,7 +453,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(Loc.t("phone", "share_destination"))
             // The desktop's computer name when it announced itself; the raw
             // socket IP only as a fallback (older desktop, or before hello).
-            .setItems(peers.map { PeerInfo.alias.ifBlank { it.remoteSocketAddress?.address?.hostAddress ?: "Desktop" } }.toTypedArray()) { _, i ->
+            .setItems(peers.map { PeerInfo.alias.ifBlank { it.remoteSocketAddress?.address?.hostAddress ?: Loc.t("phone", "peer_desktop") } }.toTypedArray()) { _, i ->
                 val host = peers[i].remoteSocketAddress?.address?.hostAddress ?: return@setItems
                 ShareSender.send(applicationContext, uris, host, 53317, PinStore.current(this))
                 sharedUris = null

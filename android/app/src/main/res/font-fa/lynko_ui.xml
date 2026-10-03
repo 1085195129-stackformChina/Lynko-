@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Farsi UI family. Both weights are declared so textStyle="bold" picks the
+     real YekanBakh Bold instead of letting the framework fake-bold it (fake
+     bold on Arabic script smears the joins and looks like a rendering bug). -->
 <font-family xmlns:android="http://schemas.android.com/apk/res/android">
     <font android:fontStyle="normal" android:fontWeight="400" android:font="@font/yekanbakh_regular" />
+    <font android:fontStyle="normal" android:fontWeight="700" android:font="@font/yekanbakh_bold" />
 </font-family>

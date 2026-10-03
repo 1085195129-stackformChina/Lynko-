@@ -228,6 +228,9 @@ class LinkService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // The FGS can outlive (and out-start) the UI activity; load the locale
+        // bundle so notification text is localized even when MainActivity is gone.
+        Loc.init(this)
         startForeground()
         // Pin to the physical WLAN *before* creating any socket, then watch
         // for network changes. On VPN toggle, all three servers are
@@ -430,7 +433,7 @@ class LinkService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Lynko link", NotificationManager.IMPORTANCE_LOW).apply {
+                NotificationChannel(CHANNEL_ID, Loc.t("app", "name"), NotificationManager.IMPORTANCE_LOW).apply {
                     // VISIBILITY_PUBLIC keeps the notification visible on the lock screen.
                     // MIUI's LockScreenClean kills processes whose FGS notification is
                     // hidden (VISIBILITY_SECRET/-1000) — adj 900 = cached background.
@@ -450,7 +453,7 @@ class LinkService : Service() {
         val notif: Notification =
             if (Build.VERSION.SDK_INT >= 26) {
                 Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Lynko")
+                    .setContentTitle(Loc.t("app", "name"))
                     .setContentText(Loc.t("phone", "notif_waiting"))
                     .setSmallIcon(android.R.drawable.stat_notify_sync)
                     .setContentIntent(launch)
@@ -459,7 +462,7 @@ class LinkService : Service() {
             } else {
                 @Suppress("DEPRECATION")
                 Notification.Builder(this)
-                    .setContentTitle("Lynko")
+                    .setContentTitle(Loc.t("app", "name"))
                     .setContentText(Loc.t("phone", "notif_waiting"))
                     .setSmallIcon(android.R.drawable.stat_notify_sync)
                     .setContentIntent(launch)
@@ -919,7 +922,7 @@ class LinkService : Service() {
 
     private fun startAudioCapture(conn: WebSocket) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            sendEvent(conn, "log", JSONObject().put("msg", "Audio unavailable: on phone open Lynko Settings → Allow playback audio, then press Audio again."))
+            sendEvent(conn, "log", JSONObject().put("msg", Loc.t("phone", "audio_unavailable")))
             return
         }
         if (android.os.Build.VERSION.SDK_INT < 29) {

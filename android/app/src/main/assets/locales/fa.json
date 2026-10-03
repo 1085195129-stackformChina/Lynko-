@@ -63,7 +63,19 @@
     "share_declined": "در رایانه رد شد",
     "share_disconnected": "رایانه قطع شد",
     "share_timeout": "زمان ارسال پایان یافت",
-    "share_size_limit": "فایل محلی با اندازه مشخص تا ۱ گیگابایت انتخاب کنید."
+    "share_size_limit": "فایل محلی با اندازه مشخص تا ۱ گیگابایت انتخاب کنید.",
+    "section_signal": "سیگنال",
+    "section_start": "شروع",
+    "section_screen": "صفحه",
+    "transfer_title": "فایل ورودی",
+    "transfer_body": "{from} می‌خواهد {n} فایل ({size}) بفرستد. می‌پذیرید؟",
+    "accept": "می‌پذیرم",
+    "decline": "رد می‌کنم",
+    "fps_preview": "{n} فریم پیش‌نمایش",
+    "audio_unavailable": "صدا در دسترس نیست: در گوشی تنظیمات لینکو → اجازهٔ صدای پخش را روشن کنید و دوباره دکمه صدا را بزنید.",
+    "file_count": "{n} فایل",
+    "peer_desktop": "رایانه",
+    "not_running": "در حال اجرا نیست"
   },
   "desktop": {
     "nav_devices": "دستگاه‌ها",

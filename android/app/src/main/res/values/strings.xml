@@ -1,9 +1,23 @@
 <resources>
     <string name="app_name">Lynko</string>
+    <string name="app_tagline">your phone, on your desktop</string>
     <string name="accessibility_service_description">Lynko uses this to receive tap and swipe commands from your paired desktop.</string>
     <string name="nav_home">Home</string>
     <string name="nav_screen">Share</string>
     <string name="interface_animations">Interface animations</string>
     <string name="motion_on">Interface animations on</string>
     <string name="motion_off">Interface animations off</string>
+
+    <!-- Home-tab section lanes -->
+    <string name="section_signal">SIGNAL</string>
+    <string name="requires">REQUIRES</string>
+    <string name="section_start">START</string>
+    <string name="start">Start Lynko</string>
+    <string name="not_running">Not running</string>
+
+    <!-- Screen tab -->
+    <string name="section_screen">SCREEN</string>
+    <string name="screen_state_idle">idle</string>
+    <string name="screen_start">Start mirroring</string>
+    <string name="fps_zero">0 fps</string>
 </resources>

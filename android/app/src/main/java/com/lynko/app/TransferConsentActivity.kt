@@ -1,12 +1,14 @@
 package com.lynko.app
 
 import android.app.Activity
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.res.ResourcesCompat
 
 /**
  * Consent screen for LocalSend-style transfer sessions. TransferServer's
@@ -26,13 +28,19 @@ class TransferConsentActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // This activity can be the very first thing the process launches (consent
+        // arrives after a desktop-initiated send), so the locale bundle may not be
+        // loaded yet — without this every label renders as "phone.transfer_title".
+        Loc.init(this)
         val alias = intent.getStringExtra(EXTRA_ALIAS) ?: "PC"
         val count = intent.getIntExtra(EXTRA_COUNT, 1)
         val size = intent.getStringExtra(EXTRA_SIZE) ?: ""
-        // sessionId for callback lookup
-        val sid = intent.getStringExtra("sessionId")
 
         val pad = (16 * resources.displayMetrics.density).toInt()
+        // Built in Kotlin, so the family must be applied explicitly or these labels
+        // fall back to Roboto while the rest of the app uses the lynko family.
+        val ui = ResourcesCompat.getFont(this, R.font.lynko_ui)
+        val uiBold = ui?.let { Typeface.create(it, Typeface.BOLD) }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -42,6 +50,7 @@ class TransferConsentActivity : Activity() {
         val title = TextView(this).apply {
             text = Loc.t("phone", "transfer_title")
             textSize = 22f
+            typeface = uiBold
             setTextColor(0xFFFFB454.toInt())
         }
         val body = TextView(this).apply {
@@ -50,16 +59,19 @@ class TransferConsentActivity : Activity() {
                 .replace("{n}", count.toString())
                 .replace("{size}", size)
             textSize = 16f
+            typeface = ui
             setTextColor(0xFFECEDEE.toInt())
             setPadding(0, pad, 0, pad * 2)
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val accept = Button(this).apply {
             text = Loc.t("phone", "accept")
+            typeface = uiBold
             setOnClickListener { v -> Haptics.tap(v); answer(true) }
         }
         val decline = Button(this).apply {
             text = Loc.t("phone", "decline")
+            typeface = uiBold
             setOnClickListener { v -> Haptics.tap(v); answer(false) }
         }
         row.addView(accept, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))

@@ -19,10 +19,13 @@ class ShareTabView(context: Context) : LinearLayout(context) {
     // Share/Settings screens are built in Kotlin (unlike the XML tabs), so
     // every TextView needs the family applied explicitly — otherwise they
     // silently fall back to Roboto and the app shows two different typefaces.
-    private val ui: Typeface? = ResourcesCompat.getFont(context, R.font.spacegrotesk_regular)
-    private val uiBold: Typeface? = ResourcesCompat.getFont(context, R.font.spacegrotesk_bold)
-    private val mono: Typeface? = Typeface.MONOSPACE
-
+    // R.font.lynko_ui is a family alias: it resolves to Space Grotesk normally
+    // and to YekanBakh under values-fa, so the Farsi tab gets its own glyphs.
+    // (Hardcoding spacegrotesk_* here bypassed that override → Latin font on Farsi.)
+    private val ui: Typeface? = ResourcesCompat.getFont(context, R.font.lynko_ui)
+    // The family carries a real 700 face (YekanBakh Bold under font-fa), so this
+    // picks it instead of relying on framework fake-bold.
+    private val uiBold: Typeface? = ui?.let { Typeface.create(it, Typeface.BOLD) }
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
 
     init {
@@ -51,7 +54,10 @@ class ShareTabView(context: Context) : LinearLayout(context) {
         choose.setOnClickListener { Haptics.tap(it); onChoose?.invoke() }
         addView(choose, LayoutParams(LayoutParams.MATCH_PARENT, dp(56)))
 
-        status.typeface = mono
+        // Status carries localized prose (file names only as a detail line), so it
+        // follows the UI family — MONOSPACE has no Persian glyphs and would silently
+        // drop to a third typeface mid-sentence in Farsi.
+        status.typeface = ui
         status.textSize = 12f
         status.setTextColor(0xFF8B8D90.toInt())
         status.setPadding(0, dp(14), 0, dp(24))
