@@ -1,6 +1,6 @@
 import type { Lang } from '../locales';
 const en = {
- health:'Connection health', unknown:'Not reported', disconnected:'Disconnected', unavailable:'Not supported by phone', idle:'Capture stopped', waiting:'No frames received', stalled:'No frame for over 5 seconds', live:'Receiving frames',
+ health:'Connection health', unknown:'Not reported', disconnected:'Disconnected', unavailable:'Not supported by phone', idle:'Capture stopped', waiting:'No frames received', stalled:'No frame for over 5 seconds', live:'Receiving frames', locked:'Phone screen is off or locked',
  lastFrame:'Last frame received', never:'None this session', control:'Phone input service', ready:'Ready', needsControl:'Enable Lynko in phone Accessibility settings', refresh:'Refresh phone status', healthHint:'Frame times come from received LV1 images, not connection heartbeats. A quiet or locked screen can stop updating without losing the link.',
  trust:'Desktop feature controls', trustHint:'These preferences apply to this desktop UI, not phone permissions or security isolation. Pairing remembers a device; HTTP and WebSocket traffic is not encrypted. Use a trusted network.',
  screen:'Mirror requests & display', input:'Remote keyboard & pointer', clipboard:'Clipboard access', files:'File sending', notifications:'Notification display & replies', audio:'Phone audio playback',
@@ -13,7 +13,7 @@ const en = {
  quality:'Mirror quality', qualityDesc:'Applies live without restarting capture. The phone still steps down automatically on a busy link.', q_eco:'Eco', q_balanced:'Balanced', q_sharp:'Sharp', q_native:'Native',
 };
 const fa: Record<keyof typeof en,string> = {
- health:'سلامت اتصال', unknown:'گزارش نشده', disconnected:'قطع اتصال', unavailable:'گوشی پشتیبانی نمی‌کند', idle:'ضبط متوقف است', waiting:'هنوز فریمی نرسیده', stalled:'بیش از ۵ ثانیه بدون فریم', live:'در حال دریافت فریم',
+ health:'سلامت اتصال', unknown:'گزارش نشده', disconnected:'قطع اتصال', unavailable:'گوشی پشتیبانی نمی‌کند', idle:'ضبط متوقف است', waiting:'هنوز فریمی نرسیده', stalled:'بیش از ۵ ثانیه بدون فریم', live:'در حال دریافت فریم', locked:'صفحه گوشی خاموش یا قفل است',
  lastFrame:'آخرین فریم دریافتی', never:'در این نشست دریافت نشده', control:'سرویس ورودی گوشی', ready:'آماده', needsControl:'Lynko را در تنظیمات دسترس‌پذیری گوشی فعال کنید', refresh:'تازه‌سازی وضعیت گوشی', healthHint:'زمان فریم از تصاویر LV1 دریافتی است، نه پیام اتصال. صفحه ثابت یا قفل‌شده ممکن است بدون قطع اتصال به‌روز نشود.',
  trust:'کنترل قابلیت‌های دسکتاپ', trustHint:'این تنظیمات فقط رابط دسکتاپ را کنترل می‌کنند، نه مجوز گوشی یا مرز امنیتی. جفت‌سازی دستگاه را به خاطر می‌سپارد؛ ترافیک HTTP و WebSocket رمزگذاری نشده است. از شبکه مطمئن استفاده کنید.',
  screen:'درخواست و نمایش آینه', input:'صفحه‌کلید و اشاره‌گر راه دور', clipboard:'دسترسی کلیپ‌بورد', files:'ارسال فایل', notifications:'نمایش اعلان و پاسخ', audio:'پخش صدای گوشی',

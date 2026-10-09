@@ -48,6 +48,9 @@ test('health distinguishes unreported, no frames, stalled, idle and unavailable'
   assert.equal(h({connected:true,mirror:true}, 9500, 10000), 'live');
   assert.equal(h({connected:true,mirror:false}, 9500, 10000), 'idle');
   assert.equal(h({connected:true}, null, 10000, false), 'unavailable');
+  assert.equal(h({connected:true,mirror:true}, null, 10000, undefined), 'waiting', 'missing caps must not read as unavailable');
+  assert.equal(h({connected:true,mirror:true}, 9500, 10000, undefined), 'live');
+  assert.equal(h({connected:true,mirror:true,locked:true}, 9500, 10000), 'locked');
 });
 test('per-app mute blocks forever; snooze lifts at its deadline', () => {
   assert.equal(typeof logic.isAppSuppressed, 'function');

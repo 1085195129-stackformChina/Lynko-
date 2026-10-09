@@ -3,7 +3,7 @@ import type {Lang} from '../locales';
 import {mirrorHealth} from './logic.mjs';
 import {text} from './strings';
 import type {Preferences} from './hooks';
-export function HealthPanel({lang,link,lastFrame,now,capable,refresh}:{lang:Lang;link:{connected:boolean;mirror?:boolean;control?:boolean};lastFrame:number|null;now:number;capable?:boolean;refresh:()=>void}) {
+export function HealthPanel({lang,link,lastFrame,now,capable,refresh}:{lang:Lang;link:{connected:boolean;mirror?:boolean;control?:boolean;locked?:boolean};lastFrame:number|null;now:number;capable?:boolean;refresh:()=>void}) {
   const h=mirrorHealth(link,lastFrame,now,capable);
   return <section className="card enhancement-panel"><h2>{text(lang,'health')}</h2>
     <dl className="health-grid"><div><dt>{text(lang,'screen')}</dt><dd data-state={h}>{text(lang,h)}</dd></div>

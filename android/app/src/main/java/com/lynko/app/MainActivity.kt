@@ -23,7 +23,6 @@ import androidx.core.app.ActivityCompat
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        val PIN: String get() = LinkService.PIN
 
         /** Live share tab, so a `hello` from the desktop can repaint it. */
         @JvmStatic var shareTab: ShareTabView? = null
@@ -374,13 +373,14 @@ class MainActivity : AppCompatActivity() {
             }
             // Service up, nobody attached yet: advertise + show the PIN.
             LinkService.running -> {
+                val pin = LinkService.ensurePin(this) // lazy-safe: also fills it if onCreate hasn't run yet
                 statusDot.setBackgroundResource(R.drawable.dot_idle)
                 statusTitle.text = Loc.t("phone", "status_waiting")
-                statusSub.text = Loc.t("phone", "status_advertising").replace("{model}", android.os.Build.MODEL).replace("{pin}", PIN)
+                statusSub.text = Loc.t("phone", "status_advertising").replace("{model}", android.os.Build.MODEL).replace("{pin}", pin)
                 startBtn.text = Loc.t("phone", "stop")
                 startBtn.isEnabled = true
                 pinText.visibility = View.VISIBLE
-                pinText.text = Loc.t("phone", "pin").replace("{pin}", PIN)
+                pinText.text = Loc.t("phone", "pin").replace("{pin}", pin)
             }
             else -> {
                 statusDot.setBackgroundResource(R.drawable.dot_idle)

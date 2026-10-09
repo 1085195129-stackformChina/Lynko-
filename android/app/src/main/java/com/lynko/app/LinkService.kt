@@ -34,10 +34,29 @@ class LinkService : Service() {
         const val PAIR_PORT = 7912
         const val LINK_PORT = 7913
         const val CHANNEL_ID = "lynko_link"
-        /** 4-digit random PIN — regenerated every launch so stale pairings fail. */
-        val PIN: String = java.security.SecureRandom().let { sr ->
-            buildString { repeat(4) { append(sr.nextInt(10)) } }
-        }
+        /** 4-digit pairing PIN. Persisted in SharedPreferences so a remembered
+                 *  pairing survives a process restart. It used to be a fresh
+                 *  SecureRandom val per launch, which meant every app restart
+                 *  silently invalidated the desktop's stored pairing — the user's
+                 *  "I had to forget and pair again" bug. [ensurePin] fills it once. */
+                @Volatile var PIN: String = ""
+                private val PIN_PREFS = "lynko_pair"
+                private const val PIN_KEY = "pair_pin"
+
+                /** Idempotent: generate + persist the PIN only on first run. */
+                fun ensurePin(ctx: Context): String {
+                    if (PIN.length == 4) return PIN
+                    synchronized(this) {
+                        if (PIN.length == 4) return PIN
+                        val prefs = ctx.applicationContext
+                            .getSharedPreferences(PIN_PREFS, Context.MODE_PRIVATE)
+                        val existing = prefs.getString(PIN_KEY, "") ?: ""
+                        PIN = if (existing.length == 4) existing else java.security.SecureRandom().let { sr ->
+                            buildString { repeat(4) { append(sr.nextInt(10)) } }
+                        }.also { prefs.edit().putString(PIN_KEY, it).apply() }
+                        return PIN
+                    }
+                }
 
         // Set false synchronously on stop: stopService() tears down on the
         // main looper a beat later, and a UI that waits for onDestroy shows
@@ -232,6 +251,9 @@ class LinkService : Service() {
         // bundle so notification text is localized even when MainActivity is gone.
         Loc.init(this)
         startForeground()
+        // PIN must exist before any server/advertise touches it — pair auth
+        // compares against it and the TXT record publishes it.
+        ensurePin(this)
         // Pin to the physical WLAN *before* creating any socket, then watch
         // for network changes. On VPN toggle, all three servers are
         // recreated on wlan0 (restartServers), and the desktop reconnects
@@ -487,7 +509,10 @@ class LinkService : Service() {
             // Duplicate under "caps" too: the first desktop builds read "cap",
             // newer builds read either. Both keys cost nothing in a TXT record.
             setAttribute("caps", "screen,audio,input,text,clip,files,notif,batt")
-            setAttribute("pin", PIN)
+            // The pairing PIN is deliberately NOT advertised. mDNS TXT records
+            // are readable by every host on the LAN, so publishing it turned a
+            // 4-digit secret into a public one and let any device auto-pair.
+            // The desktop asks the user for the PIN shown on the phone.
             setAttribute("usb", if (UsbState.connected) "1" else "0")
         }
         // Named listener (stash the handle) so reAdvertise() can unregister
