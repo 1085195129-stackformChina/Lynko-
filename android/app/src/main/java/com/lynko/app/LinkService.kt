@@ -58,6 +58,32 @@ class LinkService : Service() {
                     }
                 }
 
+                /** Stable per-install id used for the mDNS service name.
+                 *  The service name used to be Build.MODEL, so two identical
+                 *  phones on one LAN collided and Android NSD silently renamed
+                 *  the second ("POCO X3 (2)"). The desktop keys devices by mDNS
+                 *  fullname, so that rename moved the device id out from under
+                 *  a stored pairing — the other half of "had to pair again".
+                 *  A random per-install suffix keeps the name unique AND stable
+                 *  across restarts, so a pairing sticks. The model name still
+                 *  reaches the desktop as the pretty_name display label. */
+                @Volatile var DEVICE_ID: String = ""
+                private const val DEVICE_ID_KEY = "device_id"
+
+                fun ensureDeviceId(ctx: Context): String {
+                    if (DEVICE_ID.isNotEmpty()) return DEVICE_ID
+                    synchronized(this) {
+                        if (DEVICE_ID.isNotEmpty()) return DEVICE_ID
+                        val prefs = ctx.applicationContext
+                            .getSharedPreferences(PIN_PREFS, Context.MODE_PRIVATE)
+                        val existing = prefs.getString(DEVICE_ID_KEY, "") ?: ""
+                        DEVICE_ID = if (existing.isNotEmpty()) existing else java.security.SecureRandom().let { sr ->
+                            buildString { repeat(4) { append("0123456789abcdef"[sr.nextInt(16)]) } }
+                        }.also { prefs.edit().putString(DEVICE_ID_KEY, it).apply() }
+                        return DEVICE_ID
+                    }
+                }
+
         // Set false synchronously on stop: stopService() tears down on the
         // main looper a beat later, and a UI that waits for onDestroy shows
         // the OLD state (the "stopped but button still says Stop" bug).
@@ -254,6 +280,7 @@ class LinkService : Service() {
         // PIN must exist before any server/advertise touches it — pair auth
         // compares against it and the TXT record publishes it.
         ensurePin(this)
+        ensureDeviceId(this)
         // Pin to the physical WLAN *before* creating any socket, then watch
         // for network changes. On VPN toggle, all three servers are
         // recreated on wlan0 (restartServers), and the desktop reconnects
@@ -501,7 +528,10 @@ class LinkService : Service() {
         // NsdManager mDNS advertiser for _lynko._tcp
         val nsd = getSystemService(android.net.nsd.NsdManager::class.java)
         val serviceInfo = android.net.nsd.NsdServiceInfo().apply {
-            serviceName = android.os.Build.MODEL.ifBlank { "Android" }
+            // Stable unique name for the mDNS KEY (desktop keys devices by this
+            // fullname). Build.MODEL collided between identical phones and made
+            // NSD rename the loser, moving the device id and breaking pairings.
+            serviceName = "lynko-${ensureDeviceId(this@LinkService)}"
             serviceType = "_lynko._tcp."
             port = LINK_PORT
             setAttribute("v", "1")
@@ -509,6 +539,9 @@ class LinkService : Service() {
             // Duplicate under "caps" too: the first desktop builds read "cap",
             // newer builds read either. Both keys cost nothing in a TXT record.
             setAttribute("caps", "screen,audio,input,text,clip,files,notif,batt")
+            // Human-readable label; the desktop already prefers this over the
+            // raw mDNS fullname when displaying a discovered device.
+            setAttribute("pretty_name", android.os.Build.MODEL.ifBlank { "Android" })
             // The pairing PIN is deliberately NOT advertised. mDNS TXT records
             // are readable by every host on the LAN, so publishing it turned a
             // 4-digit secret into a public one and let any device auto-pair.

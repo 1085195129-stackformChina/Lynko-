@@ -306,6 +306,10 @@ async fn handle_link(stream: tokio::net::TcpStream) {
                             let entry = open_files.entry(id.clone()).or_insert_with(|| {
                                 let path = format!("downloads/{id}.bin");
                                 println!("sim: file begin {id} -> {path}");
+                                // Relative to the sim's cwd, which is the repo
+                                // root when launched from there — create it or
+                                // File::create panics and the transfer dies.
+                                let _ = std::fs::create_dir_all("downloads");
                                 (std::fs::File::create(&path).expect("create file"), 0u64)
                             });
                             use std::io::Write;
