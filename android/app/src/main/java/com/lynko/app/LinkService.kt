@@ -446,6 +446,10 @@ class LinkService : Service() {
             pairingServer = null
             transferServer = null
             linkServer = null
+            // stop() is async on all three servers, so the ports linger for
+            // a beat. Bind immediately and SO_REUSEADDR can't help because
+            // the old socket is still in the kernel table. Give them 400ms.
+            Thread.sleep(400)
             startServers()
             advertise()
         }.start()
@@ -457,9 +461,12 @@ class LinkService : Service() {
      *  WebSocketServer.stop() can block and must never run there. */
     @Volatile private var linkRebindAttempts = 0
     private fun scheduleLinkRebind() {
-        if (linkRebindAttempts >= 8) { Log.e(TAG, "link rebind exhausted — 7913 stays down"); return }
+        // Budget is generous (30) and resets on any successful dial (onOpen).
+        // 8 was too few: a VPN flap or MIUI doze can outlast ~30s of backoff,
+        // and once spent the listener stayed dead for the whole process life.
+        if (linkRebindAttempts >= 30) { Log.e(TAG, "link rebind exhausted — 7913 stays down"); return }
         linkRebindAttempts++
-        val delay = 1500L * linkRebindAttempts
+        val delay = minOf(1500L * linkRebindAttempts, 15000L)
         Log.w(TAG, "link listener dead — rebind #$linkRebindAttempts in ${delay}ms")
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             Thread {
@@ -644,8 +651,12 @@ class LinkService : Service() {
     /** WS link server: JSON commands in, JSON events + LV1 frames out. */
     inner class LinkServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
         override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
-            Log.i(TAG, "desktop connected: ${handshake.resourceDescriptor}")
-            connectedClients++
+                    Log.i(TAG, "desktop connected: ${handshake.resourceDescriptor}")
+                    // A good dial means 7913 is healthy again: clear the rebind budget
+                    // so one bad spell (VPN flap, doze) can't latch the listener dead
+                    // for the rest of the process life ("7913 stays down" black mirror).
+                    linkRebindAttempts = 0
+                    connectedClients++
             PhoneState.setLink(true)
             PhoneState.broadcaster = { json ->
                 try { conn.send(json.toString()) } catch (e: Exception) { Log.w(TAG, "state push failed: ${e.message}") }
