@@ -1,6 +1,6 @@
 [package]
 name = "lynko"
-version = "0.1.0"
+version = "0.2.5"
 description = "Lynko desktop companion - your phone, on your desktop"
 edition = "2021"
 rust-version = "1.77.2"
@@ -25,6 +25,7 @@ tiny_http = "0.12.0"
 tokio-tungstenite = "0.29.0"
 futures-util = "0.3.34"
 sha2 = "0.10"
+chrono = "0.4"
 whoami = "1.6"
 bytes = "1"
 uuid = { version = "1.20.0", features = ["v4"] }

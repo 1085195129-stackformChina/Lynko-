@@ -9,8 +9,16 @@ const en = {
  fit:'Fit', fill:'Fill (crop)', top:'Always on top',
  animations:'Interface animations', motionHint:'Optional interface effects; system reduced-motion always takes priority.', forgetConfirm:'Forget this paired phone? An active link will disconnect.', confirm:'Forget phone', cancelAction:'Keep phone', disabled:'Disabled by desktop feature controls', error:'Action failed', seconds:'s ago',
  hotkeys:'Global hotkeys', hotkeysHint:'Work even when Lynko is in the background. Ctrl+Shift+L shows or hides the window, Ctrl+Shift+M toggles the mirror. Both are free — pick different ones if they clash with another app.', hotkeyConflict:'Lynko could not claim that hotkey; another app already owns it. Hotkeys stay off until it is free.',
- updates:'Check for updates', updatesDesc:'New versions from GitHub releases', version:'Version', checkNow:'Check now', checking:'Checking…', uptodate:'You are up to date', updateAvailable:'Update available', checkFailed:'Check failed', checkOffline:'check your internet connection', autoCheck:'Check automatically on launch', whatsnew:'What is new', updated:'Lynko updated', download:'Download', later:'Later', published:'Published',
+ updates:'Check for updates', updatesDesc:'New versions from GitHub releases', version:'Version', checkNow:'Check now', checking:'Checking…', uptodate:'You are up to date', updateAvailable:'Update available', checkFailed:'Check failed', checkOffline:'check your internet connection', autoCheck:'Check automatically on launch', whatsnew:'What is new', updated:'Lynko updated', download:'Download', downloading:'Downloading…', installing:'Installing — Lynko restarts', downloadFailed:'Download failed', later:'Later', published:'Published',
  quality:'Mirror quality', qualityDesc:'Applies live without restarting capture. The phone still steps down automatically on a busy link.', q_eco:'Eco', q_balanced:'Balanced', q_sharp:'Sharp', q_native:'Native',
+ shareOfferTitle:'{alias} wants to send you {n} file(s)', shareSaveHint:'Files are saved to your Downloads folder. Existing files will not be overwritten.',
+ shareDecline:'Decline', shareAccept:'Accept', shareClose:'Close',
+ shareReceiving:'Receiving files', shareFiles:'Files: {curr} / {total}', shareSize:'Size: {curr} / {total}', shareSpeed:'Speed: {speed}/s',
+ shareWaiting:'Waiting for response…', shareFinished:'Finished', shareFinishedError:'Finished with error', shareCanceled:'Canceled by sender',
+ shareQ:'Queue', shareSkip:'Skipped', shareErr:'Error', shareDone:'Done', shareSending:'Sending',
+ shareHistory:'History', shareOpenFolder:'Open folder', shareDeleteHistory:'Delete history', shareEmptyHistory:'The history is empty.', sharePickRecipient:'Choose the phone to receive your files', shareSendingTo:'To: {name}',
+ shareTarget:'Sending to', shareTargetNone:'No phone linked', shareConnected:'Connected',
+ shareSameWifi:'Ensure the phone is on the same Wi-Fi network.', shareTroubleshoot:'Troubleshoot',
 };
 const fa: Record<keyof typeof en,string> = {
  health:'سلامت اتصال', unknown:'گزارش نشده', disconnected:'قطع اتصال', unavailable:'گوشی پشتیبانی نمی‌کند', idle:'ضبط متوقف است', waiting:'هنوز فریمی نرسیده', stalled:'بیش از ۵ ثانیه بدون فریم', live:'در حال دریافت فریم', locked:'صفحه گوشی خاموش یا قفل است',
@@ -22,8 +30,30 @@ const fa: Record<keyof typeof en,string> = {
  fit:'جا دادن', fill:'پر کردن (برش)', top:'همیشه روی پنجره‌ها',
  animations:'پویانمایی رابط', motionHint:'جلوه‌های اختیاری رابط؛ تنظیم کاهش حرکت سیستم همیشه اولویت دارد.', forgetConfirm:'این گوشی فراموش شود؟ اتصال فعال قطع خواهد شد.', confirm:'فراموش کردن گوشی', cancelAction:'نگه داشتن گوشی', disabled:'در کنترل قابلیت‌های دسکتاپ غیرفعال است', error:'عملیات ناموفق', seconds:'ثانیه پیش',
  hotkeys:'کلیدهای سراسری', hotkeysHint:'حتی وقتی لینکو در پس‌زمینه است کار میکند. Ctrl+Shift+L پنجره را نشان یا پنهان میکند و Ctrl+Shift+M آینه را روشن/خاموش میکند.', hotkeyConflict:'Lynko نتوانست آن کلید را بگیرد؛ برنامه دیگری زودتر آن را دارد.',
- updates:'بررسی به‌روزرسانی', updatesDesc:'نسخه‌های جدید از انتشارهای گیت‌هاب', version:'نسخه', checkNow:'بررسی کن', checking:'در حال بررسی…', uptodate:'به‌روز هستید', updateAvailable:'نسخه جدید موجود است', checkFailed:'بررسی ناموفق بود', checkOffline:'اتصال اینترنت را بررسی کنید', autoCheck:'بررسی خودکار هنگام اجرا', whatsnew:'تازه‌ها', updated:'Lynko به‌روز شد', download:'دانلود', later:'بعداً', published:'انتشار',
+ updates:'بررسی به‌روزرسانی', updatesDesc:'نسخه‌های جدید از انتشارهای گیت‌هاب', version:'نسخه', checkNow:'بررسی کن', checking:'در حال بررسی…', uptodate:'به‌روز هستید', updateAvailable:'نسخه جدید موجود است', checkFailed:'بررسی ناموفق بود', checkOffline:'اتصال اینترنت را بررسی کنید', autoCheck:'بررسی خودکار هنگام اجرا', whatsnew:'تازه‌ها', updated:'Lynko به‌روز شد', download:'دانلود', downloading:'در حال دانلود…', installing:'در حال نصب — Lynko دوباره باز می‌شود', downloadFailed:'دانلود ناموفق بود', later:'بعداً', published:'انتشار',
  quality:'کیفیت آینه', qualityDesc:'بدون راه‌اندازی دوباره، زنده اعمال می‌شود. در شبکه شلوغ گوشی همچنان خودکار کیفیت را پایین می‌آورد.', q_eco:'کم‌مصرف', q_balanced:'متعادل', q_sharp:'تیز', q_native:'بومی',
+ shareOfferTitle:'{alias} می‌خواهد {n} فایل برایتان بفرستد', shareSaveHint:'فایل‌ها در پوشه «Downloads» ذخیره می‌شوند. فایل موجود جایگزین نمی‌شود.',
+ shareDecline:'رد کردن', shareAccept:'پذیرفتن', shareClose:'بستن',
+ shareReceiving:'دریافت فایل‌ها', shareFiles:'فایل‌ها: {curr} / {total}', shareSize:'حجم: {curr} / {total}', shareSpeed:'سرعت: {speed}/ث',
+ shareWaiting:'در انتظار پاسخ…', shareFinished:'پایان', shareFinishedError:'پایان با خطا', shareCanceled:'لغو توسط فرستنده',
+ shareQ:'صف', shareSkip:'رد شده', shareErr:'خطا', shareDone:'انجام شد', shareSending:'در حال ارسال',
+ shareHistory:'تاریخچه', shareOpenFolder:'باز کردن پوشه', shareDeleteHistory:'پاک کردن تاریخچه', shareEmptyHistory:'تاریخچه خالی است.', sharePickRecipient:'برای ارسال، ابتدا گوشی گیرنده را انتخاب کنید', shareSendingTo:'گیرنده: {name}',
+ shareTarget:'ارسال به', shareTargetNone:'هیچ گوشی‌ای متصل نیست', shareConnected:'متصل',
+ shareSameWifi:'مطمئن شوید گوشی روی همان شبکه وای‌فای است.', shareTroubleshoot:'عیب‌یابی',
+};
+const zh: Record<keyof typeof en,string> = {
+  health:'连接状态', unknown:'未报告', disconnected:'已断开', unavailable:'手机不支持', idle:'采集已停止', waiting:'尚未收到画面', stalled:'超过 5 秒没有画面', live:'正在接收画面', locked:'手机屏幕关闭或已锁定',
+  lastFrame:'上次收到画面', never:'本次会话无', control:'手机输入服务', ready:'就绪', needsControl:'请在手机的辅助功能设置中启用 Lynko', refresh:'刷新手机状态', healthHint:'画面时间来自收到的 LV1 图像，而非连接心跳。画面静止或锁屏时可能停止更新，但连接不会中断。', trust:'桌面端功能控制', trustHint:'这些选项只作用于桌面界面，不涉及手机权限或安全隔离。配对会记住设备；HTTP 和 WebSocket 流量未加密。请使用可信网络。',
+  screen:'镜像请求与显示', input:'远程键盘与指针', clipboard:'剪贴板访问', files:'文件发送', notifications:'通知显示与回复', audio:'手机音频播放', privacy:'通知隐私', hidePreview:'隐藏标题和内容', privacyHint:'过滤在写入本地历史和 Windows 通知之前完成。更改也会删除现有的本地预览；隐藏的内容无法恢复，手机仍可能发送它。',
+  blockedApps:'已屏蔽的应用标识', block:'屏蔽应用', unblock:'取消屏蔽', appPlaceholder:'精确的应用标识', hidden:'预览已隐藏', clear:'清除本地历史', queued:'排队中', sending:'发送中 / 等待手机确认', sent:'已发送',
+  failed:'失败', cancelled:'已取消', retry:'重试', cancel:'取消排队', queueHint:'一次只能发送一个文件。重试会再次向手机请求。正在上传的文件无法在此取消，排队中的可以。进度按已读取字节计算，而非手机确认。', queuePaused:'队列正在等待原手机及文件发送功能开启。', fit:'适应', fill:'填充（裁剪）', top:'窗口置顶',
+  animations:'界面动画', motionHint:'可选的界面效果；系统的“减少动态效果”始终优先。', forgetConfirm:'忘记这台已配对的手机？当前连接会断开。', confirm:'忘记手机', cancelAction:'保留手机', disabled:'已被桌面端功能控制禁用', error:'操作失败', seconds:'秒前', hotkeys:'全局快捷键',
+  hotkeysHint:'即使 Lynko 在后台也生效。Ctrl+Shift+L 显示或隐藏窗口，Ctrl+Shift+M 切换镜像。两者默认均未占用——如与其他应用冲突，请另选。', hotkeyConflict:'Lynko 无法占用该快捷键，已被其他应用使用。在释放之前快捷键保持关闭。', updates:'检查更新', updatesDesc:'来自 GitHub Releases 的新版本', version:'版本', checkNow:'立即检查', checking:'正在检查…', uptodate:'已是最新版本', updateAvailable:'有可用更新',
+  checkFailed:'检查失败', checkOffline:'请检查网络连接', autoCheck:'启动时自动检查', whatsnew:'更新内容', updated:'Lynko 已更新', download:'下载', downloading:'正在下载…', installing:'正在安装 — Lynko 将重新启动', downloadFailed:'下载失败', later:'稍后', published:'发布于', quality:'镜像质量',
+  qualityDesc:'无需重启采集即可生效。网络繁忙时，手机仍会自动降低质量。', q_eco:'省电', q_balanced:'均衡', q_sharp:'清晰', q_native:'原始', shareOfferTitle:'{alias} 想向你发送 {n} 个文件', shareSaveHint:'文件会保存到“下载”文件夹，同名文件不会被覆盖。', shareDecline:'拒绝', shareAccept:'接受',
+  shareClose:'关闭', shareReceiving:'正在接收文件', shareFiles:'文件：{curr} / {total}', shareSize:'大小：{curr} / {total}', shareSpeed:'速度：{speed}/秒', shareWaiting:'等待对方响应…', shareFinished:'已完成', shareFinishedError:'完成但有错误', shareCanceled:'已由发送方取消',
+  shareQ:'队列', shareSkip:'已跳过', shareErr:'错误', shareDone:'完成', shareSending:'发送中', shareHistory:'历史记录', shareOpenFolder:'打开文件夹', shareDeleteHistory:'删除历史记录', shareEmptyHistory:'历史记录为空。',
+  sharePickRecipient:'选择接收文件的手机', shareSendingTo:'接收方：{name}', shareTarget:'发送至', shareTargetNone:'未连接手机', shareConnected:'已连接', shareSameWifi:'请确认手机连接到同一 Wi-Fi 网络。', shareTroubleshoot:'疑难解答',
 };
 export type EnhancementKey = keyof typeof en;
-export const text = (lang:Lang, key:EnhancementKey) => (lang === 'fa' ? fa : en)[key];
+export const text = (lang:Lang, key:EnhancementKey) => (lang === 'fa' ? fa : lang === 'zh' ? zh : en)[key];

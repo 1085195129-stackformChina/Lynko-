@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Lang, LANGS, t as tr } from "./locales";
 import {
-  IconAudio, IconBack, IconBattery, IconClip, IconDevices, IconExpand, IconFiles,
-  IconHome, IconNotes, IconPlay, IconRecents, IconRotate, IconScreen,
-  IconSettings, IconStop, Mark,
+  IconAudio, IconBack, IconBattery, IconBell, IconBellOff, IconCamera, IconClip,
+  IconDevices, IconExpand, IconFiles, IconHome, IconNotes, IconPin, IconPlay,
+  IconRecents, IconRotate, IconScreen, IconSettings, IconStop, Mark,
 } from "./icons";
 import QRCode from "qrcode";
-import {IncomingShare} from "./enhancements/IncomingShare";
+import {IncomingShare,ShareHistory} from "./enhancements/IncomingShare";
 import {usePreferences, readPreferences, useTransfers, useHotkeys, type Preferences, type TransferItem} from './enhancements/hooks';
 import {mapKey} from './enhancements/keyboard.mjs';
 import {filterNotification, isAppSuppressed} from './enhancements/logic.mjs';
 import {HealthPanel, FeatureControls, PrivacyControls} from './enhancements/Panels';
-import {UpdateSection} from './enhancements/Update';
+import {UpdatePrompt, UpdateSection} from './enhancements/Update';
 import {QualitySection, presetDims} from './enhancements/Quality';
 import {text as extra} from './enhancements/strings';
+import Onboarding from './Onboarding';
 import './enhancements/styles.css';
 
 /* ------------------------------------------------------------------ */
@@ -32,7 +33,7 @@ try {
   listenFn = async () => () => {};
 }
 
-const api = { invoke: <T,>(cmd:string, args?:Record<string,unknown>):Promise<T> => {
+export const api = { invoke: <T,>(cmd:string, args?:Record<string,unknown>):Promise<T> => {
   const p = readPreferences();
   const blocked = (cmd.startsWith('inject_') && !p.input) ||
     ((cmd.includes('clipboard') || cmd === 'paste_to_phone') && !p.clipboard) ||
@@ -146,9 +147,19 @@ function useToasts() {
 
 export default function App() {
   const [view, setView] = useState<View>("devices");
+  // First run = flag absent. Continue writes it; Settings' "run setup again"
+  // clears it and re-enters.
+  const [onboarding, setOnboarding] = useState(() => localStorage.getItem("lynko.onboarded") === null);
+  const appSetView = useRef(setView);
+  appSetView.current = setView;
   const [lang, setLang] = useState<Lang>(() => {
     const saved = localStorage.getItem("lynko-lang");
-    return saved === "fa" || saved === "en" ? saved : (navigator.language || "").startsWith("fa") ? "fa" : "en";
+    if (saved === "fa" || saved === "zh" || saved === "en") return saved;
+    const nav = (navigator.language || "").toLowerCase();
+    // zh-TW/zh-HK/zh-MO/zh-Hant are Traditional; only Simplified is bundled,
+    // so those fall back to English rather than showing the wrong script.
+    const trad = /^zh-(tw|hk|mo|hant)/.test(nav);
+    return nav.startsWith("fa") ? "fa" : nav.startsWith("zh") && !trad ? "zh" : "en";
   });
   useEffect(() => {
     localStorage.setItem("lynko-lang", lang);
@@ -344,7 +355,7 @@ export default function App() {
     api.on<LinkState>("link_state", (e) => {
       setLink(e.payload);
       if (e.payload.connected) {
-        toast("Connected", "ok");
+        toast(tr(prefsLangRef.current, "toasts", "connected"), "ok");
       } else {
         setBattery(null);
         // Link dropped: the phone can't be muted-for-mirror anymore; make
@@ -365,11 +376,11 @@ export default function App() {
       } else if (ev.t === "clipboard") {
         if (!readPreferences().clipboard) return;
         setClipItems((c) => [{ id: ++toastUid, text: ev.d.text as string, source: "phone" as const, at: Date.now() }, ...c].slice(0, 30));
-        toast("Clipboard received from phone", "ok");
+        toast(tr(prefsLangRef.current, "toasts", "clip_from_phone"), "ok");
       } else if (ev.t === "clipboard_reply") {
         if (!readPreferences().clipboard) return;
         setClipItems((c) => [{ id: ++toastUid, text: ev.d.text as string, source: "phone" as const, at: Date.now() }, ...c].slice(0, 30));
-        toast("Clipboard pulled from phone", "ok");
+        toast(tr(prefsLangRef.current, "toasts", "clip_pull_phone"), "ok");
       } else if (ev.t === "phone_state") {
         const hadControl = linkRef.current.control;
         const wasMirror = linkRef.current.mirror;
@@ -386,17 +397,17 @@ export default function App() {
           control: typeof ev.d.control === "boolean" ? ev.d.control : undefined,
           usb: (ev.d.usb as boolean) ?? false,
         }));
-        if (ev.d.locked) toast("Phone locked — mirror survives locks; it returns on unlock", "info");
+        if (ev.d.locked) toast(tr(prefsLangRef.current, "toasts", "phone_locked"), "info");
         // Flipped to false while a desktop is live: gestures are being eaten.
         // Say it once per transition, with the exact cure (MIUI shows the
         // toggle as ON even when the service is dead).
         if (hadControl && ev.d.control === false) {
-          toast("Phone can't receive input — open Settings → Accessibility → Lynko, toggle OFF then ON", "err");
+          toast(tr(prefsLangRef.current, "toasts", "input_dead"), "err");
         }
       } else if (ev.t === "input_error") {
         const kind = ev.d.kind as string;
-        if (kind === "accessibility") toast("Taps & swipes need Accessibility: open Settings → Accessibility → Lynko → enable", "err");
-        else if (kind === "field") toast("No focused text field on the phone — tap one in the mirror first", "err");
+        if (kind === "accessibility") toast(tr(prefsLangRef.current, "toasts", "need_accessibility"), "err");
+        else if (kind === "field") toast(tr(prefsLangRef.current, "toasts", "no_focused_field"), "err");
       } else if (ev.t === "notification") {
         const safe = filterNotification({app:String(ev.d.app ?? ''), title:String(ev.d.title ?? ''), body:String(ev.d.text ?? ev.d.body ?? '')}, readPreferences());
         if (!safe) return;
@@ -431,8 +442,17 @@ export default function App() {
       toast(e.payload.msg, "info");
     }).then((u) => unsubs.push(u));
 
-    /* native OS file drops (real paths) feed the Files queue too */
+    /* native OS file drops (real paths) feed the Files queue too. No link yet:
+       names the cause and opens the pairing tab instead of a raw hook error. */
     dropHandler = (paths) => {
+      const setView = appSetView.current;
+      if (!linkRef.current.connected && paths.length) {
+        if (setView) {
+          toast(extra(prefsLangRef.current, "sharePickRecipient"), "err");
+          setView("devices");
+        }
+        return;
+      }
       for (const p of paths) { try { enqueueFile(p); } catch(e) { toast(String(e), "err"); } }
     };
 
@@ -473,7 +493,10 @@ export default function App() {
         startAudio={startAudio}
         stopAudio={stopAudio}
         screenFps={screenFps}
+        onboarding={onboarding}
+        setOnboarding={setOnboarding}
       />
+      <UpdatePrompt lang={lang} />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
@@ -505,6 +528,7 @@ interface ShellProps {
   startAudio: () => Promise<void>;
   stopAudio: () => Promise<void>;
   screenFps: number;
+  onboarding: boolean; setOnboarding: (v: boolean) => void;
 }
 
 function Shell(props: ShellProps) {
@@ -529,12 +553,28 @@ function Shell(props: ShellProps) {
 
       <IncomingShare lang={lang}/>
       <main className="stage">
-        {view === 'health' && <div className="view"><HealthPanel lang={lang} link={link} lastFrame={props.lastFrame} now={props.now} capable={connectedDevice?.caps.screen_capture} refresh={()=>{void api.invoke('request_status').catch(e=>props.toast(String(e),'err'));}}/></div>}
-        {view === "devices" && <DevicesView {...props} />}
-        {view === "screen" && <ScreenView {...props} />}
-        {view === "files" && <FilesView {...props} />}
-        {view === "notifications" && <NotificationsView {...props} />}
-        {view === "settings" && <SettingsView {...props} />}
+        {props.onboarding ? (
+          <Onboarding
+            lang={lang}
+            prefs={props.prefs}
+            updatePrefs={props.updatePrefs}
+            toast={props.toast}
+            onDone={() => {
+              try { localStorage.setItem("lynko.onboarded", "1"); } catch { /* quota */ }
+              props.setOnboarding(false);
+              setView("devices");
+            }}
+          />
+        ) : (
+          <>
+            {view === 'health' && <div className="view"><HealthPanel lang={lang} link={link} lastFrame={props.lastFrame} now={props.now} capable={connectedDevice?.caps.screen_capture} refresh={()=>{void api.invoke('request_status').catch(e=>props.toast(String(e),'err'));}}/></div>}
+            {view === "devices" && <DevicesView {...props} />}
+            {view === "screen" && <ScreenView {...props} />}
+            {view === "files" && <FilesView {...props} />}
+            {view === "notifications" && <NotificationsView {...props} />}
+            {view === "settings" && <SettingsView {...props} />}
+          </>
+        )}
       </main>
 
       <footer className="status">
@@ -563,8 +603,8 @@ function Shell(props: ShellProps) {
             <IconBattery />{battery.pct}%
           </span>
         )}
-        <span className="sp">{devices.filter((d) => d.online).length} online</span>
-        <span className="sp">{devices.filter((d) => d.paired).length} paired</span>
+        <span className="sp">{T("online_count").replace("{n}", String(devices.filter((d) => d.online).length))}</span>
+        <span className="sp">{T("paired_count").replace("{n}", String(devices.filter((d) => d.paired).length))}</span>
         {link.connected && link.mirror && screenFps > 0 && (
           <span className="sp">{screenFps}fps</span>
         )}
@@ -604,7 +644,15 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
   const RELEASE_URL = "https://github.com/ErfanBagheri404/Lynko/releases/latest";
 
   useEffect(() => {
-    QRCode.toDataURL(RELEASE_URL, { width: 180, margin: 1, color: { dark: "#e8e6e1", light: "#0a0b0d" } })
+    // Standard QR polarity, always: DARK modules on a LIGHT background.
+    // An inverted render (light modules on the dark card) only decodes on
+    // inversion-tolerant scanners, which drops a real chunk of phone
+    // cameras. margin 4 satisfies the spec's required quiet zone.
+    QRCode.toDataURL(RELEASE_URL, {
+      width: 240,
+      margin: 4,
+      color: { dark: "#0a0b0d", light: "#ffffff" },
+    })
       .then(setQrDataUrl)
       .catch(() => {});
   }, []);
@@ -653,7 +701,9 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
   };
 
   const paired = devices.filter((d) => d.paired);
-  const unpaired = devices.filter((d) => !d.paired);
+  // Only devices reachable right now — an offline mDNS entry would be a
+  // tappable "Pair" that can only time out.
+  const unpaired = devices.filter((d) => !d.paired && d.online);
 
   return (
     <div className="view">
@@ -665,8 +715,12 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
           <p className="desc">{T("radar_desc")}</p>
           <div className="radar-world">
             <div className="ring r1" /><div className="ring r2" /><div className="ring r3" /><div className="radar-core" />
-            {devices.map((d, i) => {
-              const n = Math.max(devices.length, 1);
+            {/* Radar = LIVE network (or USB) devices only. Offline paired
+                entries stay in the Paired list below — showing them here
+                implies they are reachable when nothing is on the air. */}
+            {devices.filter((d) => d.online).map((d, i) => {
+              const live = devices.filter((x) => x.online);
+              const n = Math.max(live.length, 1);
               const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
               const r = 32 + ((i * 37) % 3) * 12;
               return (
@@ -683,9 +737,15 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
             })}
           </div>
           <div className="radar-foot">
-            <span className="radar-count"><strong>{devices.length}</strong> phone(s)</span>
+            <span className="radar-count"><strong>{devices.filter((d) => d.online).length}</strong> {T("phone_count")}</span>
             <button className="btn sm ghost" onClick={scan}>{T("scan")}</button>
           </div>
+          {devices.filter((d) => d.online).length === 0 && (
+            <div className="radar-hint">
+              <span>{extra(lang, "shareSameWifi")}</span>
+              <button className="btn sm ghost" onClick={scan}>{extra(lang, "shareTroubleshoot")}</button>
+            </div>
+          )}
         </div>
 
         <div className="stack">
@@ -696,7 +756,7 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
                 <span className={d.online ? "dev-dot on" : "dev-dot off"} />
                 <div className="who">
                   <strong>{d.name}</strong>
-                  <span className="addr" title={d.address}>{d.id.startsWith("usb:") ? T("via_usb") : d.address}</span>
+                  <span className={d.id.startsWith("usb:") ? "via" : "addr"} title={d.address}>{d.id.startsWith("usb:") ? T("via_usb") : d.address}</span>
                   {d.linked && <span className="linked-tag">{T("status_connected")}</span>}
                 </div>
                 <div className="act">
@@ -717,10 +777,10 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
               {unpaired.map((d) => (
                 <div key={d.id} className="devrow">
                   <span className={d.id.startsWith("usb:") ? "dev-dot usb" : "dev-dot on"} />
-                  <div className="who"><strong>{d.name}</strong><span className="addr" title={d.address}>{d.id.startsWith("usb:") ? T("via_usb") : d.address}</span>
-                    {pairUnavailable === d.id && <span role="status" style={{color: "var(--amber, #ffb454)", maxWidth: 340}}>{lang === "fa" ? "لینکو را در گوشی باز کنید و شروع را بزنید، سپس دوباره تلاش کنید." : "Open Lynko on your phone and tap Start, then try again."}</span>}
+                  <div className="who"><strong>{d.name}</strong><span className={d.id.startsWith("usb:") ? "via" : "addr"} title={d.address}>{d.id.startsWith("usb:") ? T("via_usb") : d.address}</span>
+                    {pairUnavailable === d.id && <span role="status" style={{color: "var(--amber, #ffb454)", maxWidth: 340}}>{T("pair_hint_open")}</span>}
                   </div>
-                  <button className="btn sm primary" disabled={checkingPair !== null} onClick={() => pair(d)}>{checkingPair === d.id ? (lang === "fa" ? "در حال بررسی…" : "Checking…") : T("pair")}</button>
+                  <button className="btn sm primary" disabled={checkingPair !== null} onClick={() => pair(d)}>{checkingPair === d.id ? T("checking") : T("pair")}</button>
                 </div>
               ))}
             </div>
@@ -729,7 +789,7 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
           <div className="card">
             <h2>{T("first_time")}</h2>
             <p className="desc">{T("qr_desc")}</p>
-            {qrDataUrl && <a href={RELEASE_URL} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",cursor:"pointer"}}><img className="qr-img" src={qrDataUrl} alt="QR code" /></a>}
+            {qrDataUrl && <a href={RELEASE_URL} target="_blank" rel="noopener noreferrer" className="qr-link"><img className="qr-img" src={qrDataUrl} alt={T("qr_alt")} /></a>}
             <span className="qr-url">{RELEASE_URL}</span>
           </div>
         </div>
@@ -775,6 +835,21 @@ function ScreenView(props: ShellProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [fill,setFill]=useState(false);
   const [onTop,setOnTop]=useState(false);
+  /* Samsung Flow parity: the Smart View control bar. DND mutes the phone's
+     notification relay, screen capture writes the mirrored frame to disk,
+     favorites pin up to 8 phone apps for one-click launch. */
+  const [dnd, setDnd] = useState(false);
+  const [apps, setApps] = useState<{ package: string; label: string }[]>([]);
+  const [favs, setFavs] = useState<{ package: string; label: string }[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("lynko-favorites") ?? "[]");
+      return Array.isArray(raw) ? raw.filter((a) => a && typeof a.package === "string").slice(0, 8) : [];
+    } catch { return []; }
+  });
+  const [showFavs, setShowFavs] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem("lynko-favorites", JSON.stringify(favs)); } catch { /* quota */ }
+  }, [favs]);
   const toggleTop=async()=>{try {const {getCurrentWindow}=await import('@tauri-apps/api/window');const win=getCurrentWindow();const next=!(await win.isAlwaysOnTop());await win.setAlwaysOnTop(next);setOnTop(next);}catch(e){toast(String(e),'err');}};
   useEffect(()=>{setStreaming(Boolean(link.connected && link.mirror));if(!link.mirror || !props.prefs.screen){setFrame(null);frameArrived.current=false;}},[link.connected,link.mirror,props.prefs.screen]);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1035,7 +1110,61 @@ function ScreenView(props: ShellProps) {
     }
   };
 
+  /* The phone answers `list_apps` with one `app_list` event. Only the phone
+     can see the launcher, so the list arrives on demand, not at connect. */
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void api
+      .on<{ t: string; d: { apps?: { package: string; label: string }[] } }>("link_event", (e) => {
+        if (e.payload.t !== "app_list") return;
+        const list = Array.isArray(e.payload.d?.apps) ? e.payload.d.apps : [];
+        setApps(list.filter((a) => a && typeof a.package === "string"));
+      })
+      .then((u) => { un = u; });
+    return () => un?.();
+  }, []);
+
   const toggleRotate = () => setRotated((r) => !r);
+
+  /* Samsung Flow parity: the Smart View control bar. */
+  const toggleDnd = async () => {
+    const next = !dnd;
+    try {
+      await api.invoke("set_dnd", { on: next });
+      setDnd(next);
+      toast(next ? T("dnd_on") : T("dnd_off"), "ok");
+    } catch (e) { toast(`${T("dnd_failed")}: ${e}`, "err"); }
+  };
+
+  /* Screen capture: the desktop already holds the newest mirrored JPEG, so
+     the shot is that exact frame written to disk — no second capture. */
+  const captureShot = async () => {
+    try {
+      const p = await api.invoke<string>("capture_screenshot");
+      toast(`${T("capture_saved")} ${p}`, "ok");
+    } catch (e) { toast(`${T("capture_failed")}: ${e}`, "err"); }
+  };
+
+  /* Favorites: the phone owns the app list (only it can see the launcher),
+     so the desktop asks for it and renders whatever comes back. */
+  const openFavPicker = async () => {
+    const next = !showFavs;
+    setShowFavs(next);
+    if (next && apps.length === 0) {
+      try { await api.invoke("request_app_list"); } catch (e) { toast(String(e), "err"); }
+    }
+  };
+
+  const launchApp = async (pkg: string) => {
+    try { await api.invoke("launch_app", { package: pkg }); }
+    catch (e) { toast(String(e), "err"); }
+  };
+
+  const toggleFav = (app: { package: string; label: string }) => {
+    setFavs((f) => f.some((x) => x.package === app.package)
+      ? f.filter((x) => x.package !== app.package)
+      : f.length >= 8 ? f : [...f, app]);
+  };
 
   const toggleFullscreen = async () => {
     const el = canvasRef.current;
@@ -1059,6 +1188,41 @@ function ScreenView(props: ShellProps) {
         <button className="btn sm" aria-pressed={fill} onClick={()=>setFill(true)}>{extra(lang,'fill')}</button>
         <button className="btn sm" aria-pressed={onTop} onClick={()=>void toggleTop()}>{extra(lang,'top')}</button>
       </div>
+      {/* Pinned favorites: one click launches the app on the phone. */}
+      {favs.length > 0 && (
+        <div className="fav-strip">
+          {favs.map((f) => (
+            <button key={f.package} className="fav-chip" disabled={!link.connected}
+              title={f.package} onClick={() => void launchApp(f.package)}>{f.label}</button>
+          ))}
+        </div>
+      )}
+      {/* Favorites picker (Samsung Flow: pin up to 8 apps inside the mirror). */}
+      {showFavs && (
+        <div className="fav-picker">
+          <div className="fav-picker-head">
+            <strong>{T("favorites")}</strong>
+            <span>{T("favorites_hint")}</span>
+            <button className="btn sm ghost" onClick={() => setShowFavs(false)}>{T("favorites_close")}</button>
+          </div>
+          {apps.length === 0 ? (
+            <p className="desc">{T("favorites_empty")}</p>
+          ) : (
+            <div className="fav-picker-list">
+              {apps.map((a) => {
+                const on = favs.some((f) => f.package === a.package);
+                return (
+                  <button key={a.package} className={`fav-row${on ? " on" : ""}`} onClick={() => toggleFav(a)}
+                    aria-pressed={on} disabled={!on && favs.length >= 8}>
+                    <span className="fav-row-label">{a.label}</span>
+                    <span className="fav-row-pkg">{a.package}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       <div className="screen-body">
       <aside className="screen-rail">
         <div className="screen-rail-group">
@@ -1081,6 +1245,16 @@ function ScreenView(props: ShellProps) {
               if (clip) { await api.invoke("inject_text", { text: clip }); toast(tr(lang, "toasts", "clip_pasted"), "ok"); }
             } catch (e) { toast(tr(lang, "toasts", "clip_failed").replace("{e}", String(e)), "err"); }
           }} title={T("paste_clip")} aria-label={T("paste_clip")}><IconClip /></button>
+        </div>
+        {/* Samsung Flow parity: the rest of the Smart View control bar. */}
+        <div className="screen-rail-group">
+          <button className={`rail-icon${dnd ? " active" : ""}`} disabled={!link.connected} onClick={toggleDnd}
+            title={dnd ? T("dnd_on") : T("dnd")} aria-label={dnd ? T("dnd_on") : T("dnd")}
+            aria-pressed={dnd}>{dnd ? <IconBellOff /> : <IconBell />}</button>
+          <button className="rail-icon" disabled={!link.connected || !frame} onClick={captureShot}
+            title={T("capture")} aria-label={T("capture")}><IconCamera /></button>
+          <button className={`rail-icon${showFavs ? " active" : ""}`} disabled={!link.connected} onClick={openFavPicker}
+            title={T("favorites")} aria-label={T("favorites")} aria-pressed={showFavs}><IconPin /></button>
         </div>
       </aside>
       <div className={`screen-frame${frame || frameArrived.current ? " lit" : ""}`}>
@@ -1141,6 +1315,15 @@ function FilesView(props: ShellProps) {
   const T = (k: string) => tr(lang, "desktop", k);
   const { link, files, toast, queueFile } = props;
   const [dragOver, setDragOver] = useState(false);
+  /* LocalSend's target card: the device a send would go to, and a state line.
+     When nothing is linked, name the likely cause first (same Wi-Fi) instead
+     of leaving the user with a dead dropzone — then offer a way to fix it. */
+  const target = props.devices.find((d) => d.id === link.device_id);
+
+  const needRecipient = () => {
+    toast(extra(lang, "sharePickRecipient"), "err");
+    props.setView("devices");
+  };
 
   /* DOM dropzone: Tauri's WebView never delivers real paths here, so the
      native window-level drop (initNativeDrop → queueFile) is the real path.
@@ -1148,8 +1331,9 @@ function FilesView(props: ShellProps) {
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    if (!link.connected) { needRecipient(); return; }
     const list = Array.from(e.dataTransfer.files);
-    if (!list.length && !link.connected) { toast(tr(lang, "desktop", "send_before_connect"), "err"); return; }
+    if (!list.length) return;
     for (const f of list) {
       const path = (f as unknown as { path?: string }).path;
       if (!path) { toast(`${f.name}: drop files onto the app window (Tauri handles it)`, "err"); continue; }
@@ -1158,6 +1342,7 @@ function FilesView(props: ShellProps) {
   };
 
   const browse = async () => {
+    if (!link.connected) { needRecipient(); return; }
     try {
       const dlg = await import("@tauri-apps/plugin-dialog");
       const picked = await dlg.open({ multiple: true, title: T("send_to_phone") });
@@ -1172,6 +1357,28 @@ function FilesView(props: ShellProps) {
       <PageHead title={T("files_title")} sub={T("files_sub")} />
       <p className="desc">{extra(lang,'queueHint')}</p><p className="desc">{extra(lang,'queuePaused')}</p>
       <div className="card">
+        {link.connected && target ? (
+          <div className="share-target">
+            <span className="share-target-label">{extra(lang, "shareTarget")}</span>
+            <button
+              className="btn sm ghost"
+              onClick={() => props.setView("devices")}
+              title={extra(lang, "sharePickRecipient")}
+            >
+              {target.name}
+            </button>
+            <span className="share-target-state">{extra(lang, "shareConnected")}</span>
+          </div>
+        ) : (
+          <div className="share-target off">
+            <span className="share-target-label">{extra(lang, "shareTarget")}</span>
+            <span className="share-target-none">{extra(lang, "shareTargetNone")}</span>
+            <span className="share-target-hint">{extra(lang, "shareSameWifi")}</span>
+            <button className="btn sm ghost" onClick={() => props.setView("devices")}>
+              {extra(lang, "shareTroubleshoot")}
+            </button>
+          </div>
+        )}
         <div
           className={dragOver ? "dropzone over" : "dropzone"}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -1208,6 +1415,7 @@ function FilesView(props: ShellProps) {
           </div>
         )}
       </div>
+      <ShareHistory lang={lang} />
     </div>
   );
 }
@@ -1356,38 +1564,80 @@ function SettingsView(props: ShellProps) {
   return (
     <div className="view">
       <PageHead title={T("settings_title")} sub={T("settings_sub")} />
-      <FeatureControls lang={lang} prefs={props.prefs} updatePrefs={props.updatePrefs}/>
-      <SetRow title={extra(lang,'animations')} desc={extra(lang,'motionHint')} on={props.prefs.animations} onToggle={()=>props.updatePrefs({animations:!props.prefs.animations})}/>
-      <SetRow title={extra(lang,'hotkeys')} desc={extra(lang,'hotkeysHint')} on={props.prefs.hotkeys} onToggle={()=>props.updatePrefs({hotkeys:!props.prefs.hotkeys})}/>
-      <div className="card">
-        <div className="set-row">
-          <div className="what"><strong>{T("language")}</strong></div>
-          <div className="lang-switch">
-            {LANGS.map((l) => (
+      <SetGroup title={T("sec_appearance")}>
+        <div className="card">
+          <div className="set-row">
+            <div className="what"><strong>{T("language")}</strong></div>
+            <div className="ctl">
+              <div className="lang-switch">
+                {LANGS.map((l) => (
+                  <button
+                    key={l.id}
+                    className={lang === l.id ? "lang-btn on" : "lang-btn"}
+                    onClick={() => setLang(l.id)}
+                    title={l.label}
+                  >
+                    {l.autonym}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <SetRow title={extra(lang,'animations')} desc={extra(lang,'motionHint')} on={props.prefs.animations} onToggle={()=>props.updatePrefs({animations:!props.prefs.animations})}/>
+          <QualitySection lang={lang}/>
+        </div>
+      </SetGroup>
+      <SetGroup title={T("sec_connection")}>
+        <div className="card">
+          <SetRow title={T("autoconnect")} desc={T("autoconnect_desc")} on={autoReconnect} onToggle={() => toggleAutoReconnect(!autoReconnect)} />
+          <SetRow title={extra(lang,'hotkeys')} desc={extra(lang,'hotkeysHint')} on={props.prefs.hotkeys} onToggle={()=>props.updatePrefs({hotkeys:!props.prefs.hotkeys})}/>
+        </div>
+      </SetGroup>
+      <SetGroup title={T("sec_features")} hint={extra(lang,'trustHint')}>
+        <FeatureControls lang={lang} prefs={props.prefs} updatePrefs={props.updatePrefs}/>
+      </SetGroup>
+      <SetGroup title={T("sec_notifications")}>
+        <div className="card">
+          <SetRow title={T("desktop_notifs")} desc={T("desktop_notifs_desc")} on={toasts} onToggle={() => toggleToasts(!toasts)} />
+        </div>
+      </SetGroup>
+      <SetGroup title={T("sec_updates")}>
+        <UpdateSection lang={lang}/>
+      </SetGroup>
+      <SetGroup title={T("sec_about")}>
+        <div className="card">
+          <div className="set-row">
+            <div className="what"><strong>{T("about")}</strong><span>{T("inspired_by")}</span></div>
+          </div>
+          <div className="set-row">
+            <div className="what"><strong>{T("onboarding")}</strong><span>{T("onboarding_desc")}</span></div>
+            <div className="ctl">
               <button
-                key={l.id}
-                className={lang === l.id ? "lang-btn on" : "lang-btn"}
-                onClick={() => setLang(l.id)}
-                title={l.label}
+                className="btn ghost"
+                onClick={() => {
+                  try { localStorage.removeItem("lynko.onboarded"); } catch { /* quota */ }
+                  props.setOnboarding(true);
+                }}
               >
-                {l.autonym}
+                {T("onboarding_go")}
               </button>
-            ))}
+            </div>
           </div>
         </div>
-      </div>
-      <div className="card">
-        <SetRow title={T("autoconnect")} desc={T("autoconnect_desc")} on={autoReconnect} onToggle={() => toggleAutoReconnect(!autoReconnect)} />
-        <SetRow title={T("desktop_notifs")} desc={T("desktop_notifs_desc")} on={toasts} onToggle={() => toggleToasts(!toasts)} />
-      </div>
-      <div className="card about-card">
-        <div className="set-row">
-          <div className="what"><strong>{T("about")}</strong><span>{T("inspired_by")}</span></div>
-        </div>
-      </div>
-      <UpdateSection lang={lang}/>
-      <QualitySection lang={lang}/>
+      </SetGroup>
     </div>
+  );
+}
+
+/* One titled lane of settings rows. Card edges do the grouping; the title
+   only names it, so the eye scans six short blocks instead of ten boxes. */
+function SetGroup({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className="set-group">
+      <h2 className="set-group-title">{title}</h2>
+      {hint && <p className="set-group-hint">{hint}</p>}
+      {children}
+    </section>
   );
 }
 

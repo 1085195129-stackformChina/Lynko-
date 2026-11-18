@@ -107,8 +107,9 @@ input, button, textarea { font-family: inherit; caret-color: var(--signal); }
 }
 
 /* language switch */
-.lang-switch { display: flex; gap: 4px; }
-.lang-btn {
+.lang-switch, .quality-row { display: flex; gap: 4px; }
+.lang-btn,
+.qbtn {
   font-family: inherit;
   font-size: 12px;
   padding: 5px 12px;
@@ -119,8 +120,10 @@ input, button, textarea { font-family: inherit; caret-color: var(--signal); }
   cursor: pointer;
   transition: color 150ms var(--ease-out), border-color 150ms var(--ease-out);
 }
-.lang-btn:hover { border-color: var(--line-strong); color: var(--ink0); }
-.lang-btn.on {
+.lang-btn:hover,
+.qbtn:hover { border-color: var(--line-strong); color: var(--ink0); }
+.lang-btn.on,
+.qbtn.on {
   background: var(--signal);
   border-color: var(--signal);
   color: var(--signal-ink);
@@ -129,6 +132,11 @@ input, button, textarea { font-family: inherit; caret-color: var(--signal); }
 .about-card .what span { max-width: 60ch; }
 
 /* Persian: Yekan Bakh + full RTL mirroring */
+html[lang="fa"] {
+  /* Every var(--font) user (buttons, cards, modal copy) follows the locale,
+     not just inherited body text. */
+  --font: var(--font-fa);
+}
 html[lang="fa"] body,
 html[lang="fa"] .shell {
   font-family: var(--font-fa);
@@ -141,10 +149,20 @@ html[lang="fa"] .rail {
 /* Mono/data stays LTR even in an RTL layout — IPs, ports, hex, timestamps
    must not be reordered. Keyed off dir so it applies to any RTL locale. */
 [dir="rtl"] .mono,
-[dir="rtl"] [class*="addr"],
 [dir="rtl"] .pin {
   direction: ltr;
   unicode-bidi: embed;
+}
+/* Address slots hold IPs *and* Persian fallbacks ("اتصال USB"), so let the
+   first strong character decide instead of forcing LTR on the label.
+   Don't set direction:ltr here — text-align:start follows the element's own
+   direction, so a forced LTR slot also left-aligns and the IP drifts to the
+   trailing edge under RTL. plaintext keeps glyph order without moving it. */
+[dir="rtl"] [class*="addr"] {
+  unicode-bidi: plaintext;
+  /* plaintext also flips the paragraph direction Chromium uses to resolve
+     text-align:start, so an IP lands flush left. Pin it to the RTL edge. */
+  text-align: right;
 }
 
 .shell {
@@ -156,15 +174,10 @@ html[lang="fa"] .rail {
     "rail  stage"
     "rail  status";
 }
-/* Grid template AREAS do not auto-mirror under dir=rtl — the named areas
-   keep their declared order, which puts the rail back on the left. Swap the
-   columns so the rail sits on the reading-edge side in both directions. */
-[dir="rtl"] .shell {
-  grid-template-columns: 1fr 200px;
-  grid-template-areas:
-    "stage rail"
-    "status rail";
-}
+/* Grid columns are laid out along the inline axis, so they already flip
+   under dir=rtl: "rail stage" declares the rail in column 1, which lands on
+   the right in RTL. Do NOT swap the columns as well — that cancels the flip
+   and parks the rail on the left again (verified live: railX 0 → 1336). */
 
 .brand {
   display: flex;
@@ -378,7 +391,7 @@ html[lang="fa"] .rail {
   border-radius: var(--radius-ctl);
   background: var(--card2);
   color: var(--ink0);
-  font-family: inherit;
+  font-family: var(--font); /* never inherit data/mono font from a container */
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -623,6 +636,33 @@ input.field:focus {
   font-variant-numeric: tabular-nums;
 }
 
+/* LocalSend's target card: who a send would go to; when nothing is linked,
+   the named cause (same Wi-Fi) + a real way out instead of a dead dropzone. */
+.share-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.share-target-label { color: var(--ink1); font-size: 12px; }
+.share-target-state { color: var(--ok); font-size: 12px; margin-inline-start: auto; }
+.share-target.off { align-items: baseline; flex-wrap: wrap; }
+.share-target-none { color: var(--ink0); font-size: 14px; }
+.share-target-hint { color: var(--ink1); font-size: 12px; }
+.radar-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink1);
+  font-size: 12px;
+}
+
 .devrow {
   display: flex;
   align-items: center;
@@ -842,11 +882,26 @@ input.field:focus {
 
 .qr-img {
   display: block;
-  width: 180px;
-  height: 180px;
-  margin: 12px auto;
+  width: 204px;
+  height: 204px;
   image-rendering: pixelated;
+  /* The QR is rendered dark-on-light for scanner compatibility, so it needs a
+     light backing or it would look like a stray white square on the dark card. */
+  background: #ffffff;
+  padding: 8px;
   border: 1px solid var(--line);
+  border-radius: 6px;
+  box-sizing: content-box;
+}
+
+/* The QR sits inside an <a>, which is INLINE content: margin:auto on the
+   image cannot centre it inside an inline box, so it hugged the left edge.
+   Centre the anchor (shrink-to-fit + auto margins) and let the image fill it. */
+.qr-link {
+  display: block;
+  width: fit-content;
+  margin: 14px auto;
+  cursor: pointer;
 }
 
 .qr-url {
@@ -893,6 +948,80 @@ input.field:focus {
 }
 
 .screen-frame.lit .screen-canvas { width: 100%; }
+
+/* Samsung Flow parity: favorites strip + picker inside the Screen view. */
+.fav-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 12px;
+}
+.fav-chip {
+  padding: 4px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink1);
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  cursor: pointer;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fav-chip:hover:not(:disabled) { color: var(--ink0); border-color: var(--line-strong); }
+.fav-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.fav-picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.fav-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.fav-picker-head strong { font-size: 13px; }
+.fav-picker-head span { flex: 1; color: var(--ink1); font-size: 12px; }
+.fav-picker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.fav-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: start;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ctl);
+  color: var(--ink0);
+  cursor: pointer;
+  font-family: inherit;
+}
+.fav-row:hover:not(:disabled) { background: var(--card2); }
+.fav-row.on { border-color: var(--signal-line); background: var(--signal-wash); }
+.fav-row:disabled { opacity: 0.45; cursor: not-allowed; }
+.fav-row-label { font-size: 12.5px; font-weight: 600; }
+.fav-row-pkg {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink1, #8b8d90);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
 
 .screen-canvas .tap-layer {
   position: absolute;
@@ -999,12 +1128,6 @@ input.field:focus {
    Files / Clipboard / Notifications — lane lists
    ============================================================ */
 
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 14px;
-  align-items: start;
-}
 
 .dropzone {
   border: 1px dashed var(--line-strong);
@@ -1200,6 +1323,23 @@ input.field:focus {
 }
 
 .set-row .what span { color: var(--ink1); font-size: 12px; }
+/* settings lanes: a small title, then one card per lane. Every control sits
+   on the same right edge; descriptions wrap on the left. */
+.set-group { margin-bottom: 20px; }
+.set-group:last-child { margin-bottom: 2px; }
+.set-group-title {
+  margin: 0 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink1);
+}
+.set-group-hint { margin: 0 2px 8px; max-width: 80ch; color: var(--ink1); font-size: 12px; line-height: 1.5; }
+.set-group > .card { padding: 2px 18px 4px; }
+.set-row .what { flex: 1 1 auto; }
+.set-row .ctl { margin-inline-start: auto; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.card > .set-row:last-child { border-bottom: 0; }
 
 .lang-switch { align-items: center; }
 
@@ -1218,6 +1358,8 @@ input.field:focus {
 }
 
 .addr { font-family: var(--mono); font-size: 12px; color: var(--ink1); }
+/* Textual fallback where an address would go ("via USB") — body font, not mono. */
+.via { font-size: 12px; color: var(--ink1); }
 
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
@@ -1233,4 +1375,152 @@ input.field:focus {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* --- onboarding (first run / Settings → "Run setup again") --- */
+
+.onb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+.onb-col {
+  width: 436px;
+  flex: none;
+  padding-top: 58px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.onb-col h1 {
+  margin: 0;
+  font-size: 29px;
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+}
+.onb-lede {
+  margin-top: 11px;
+  max-width: 390px;
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--ink1);
+}
+.onb-sect {
+  margin-top: 38px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+.onb-sect b {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink1);
+}
+.onb-sect span {
+  font-size: 11.5px;
+  color: var(--ink1); /* --ink2 is non-text-only in this repo */
+}
+.onb-prow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.onb-ico {
+  width: 20px;
+  flex: none;
+  display: flex;
+  color: var(--ink1);
+  transition: color 180ms var(--ease-out);
+}
+.onb-prow.done .onb-ico { color: var(--signal); }
+.onb-txt { flex: 1; min-width: 0; }
+.onb-t { font-size: 14px; font-weight: 500; letter-spacing: -0.005em; }
+.onb-d { font-size: 12px; color: var(--ink1); margin-top: 3px; line-height: 1.45; }
+.onb-sw {
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  position: relative;
+  flex: none;
+  cursor: pointer;
+  transition: background 180ms var(--ease-out), border-color 180ms var(--ease-out);
+}
+.onb-sw::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink1);
+  transition: transform 180ms var(--ease-out), background 180ms var(--ease-out);
+}
+.onb-sw.on { background: var(--signal-wash); border-color: var(--signal-line); }
+.onb-sw.on::after { transform: translateX(16px); background: var(--signal); }
+.onb-sw.busy { opacity: 0.5; pointer-events: none; }
+.onb-sw:focus-visible { outline: 1px solid var(--signal); outline-offset: 2px; }
+.onb-act {
+  margin-top: 26px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.onb-btn {
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-family: var(--font);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  transition: filter 160ms var(--ease-out);
+}
+.onb-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.onb-btn:disabled { background: var(--card2); color: var(--ink1); cursor: default; }
+.onb-link {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  font-family: var(--font);
+  font-size: 12.5px;
+  color: var(--ink1);
+  cursor: pointer;
+  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+.onb-link:hover { color: var(--ink0); border-bottom-color: var(--line-strong); }
+.onb-foot {
+  margin-top: auto;
+  padding: 26px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ink1); /* --ink2 is non-text-only in this repo */
+}
+.onb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--signal);
+  flex: none;
 }

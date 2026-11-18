@@ -1,12 +1,13 @@
 // Lynko icons — one consistent stroke, drawn for this app.
 // 20x20 grid, stroke 1.6, round joins.
 
+// Same stair mark as the launcher/app icon, so the product reads as one thing.
 export const Mark = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <rect x="2.5" y="2.5" width="19" height="19" rx="6" fill="#20242A" stroke="rgba(255,255,255,0.12)" />
-    <circle cx="8.4" cy="12" r="2.6" fill="#ffb454" />
-    <circle cx="15.6" cy="12" r="2.6" fill="#f2f1ec" />
-    <rect x="10.6" y="11.2" width="2.8" height="1.6" rx="0.8" fill="#ffb454" />
+    <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#0A0B0D" stroke="rgba(255,255,255,0.12)" />
+    <g transform="translate(5.04 5.04) scale(0.054375)" fill="#ffb454">
+      <path d="M160,256 L96,256 L96,160 L0,160 L0,96 L160,96 Z M256,256 L192,256 L192,64 L0,64 L0,0 L256,0 Z M64,256 L0,256 L0,192 L64,192 Z" />
+    </g>
   </svg>
 );
 
@@ -159,5 +160,36 @@ export const IconExpand = ic(
     <path d="M20 14.5V20h-5.5" />
     <path d="M14.5 4H20v5.5" />
     <path d="M9.5 20H4v-5.5" />
+  </>
+);
+
+/* Samsung Flow parity rail controls */
+
+export const IconCamera = ic(
+  <>
+    <path d="M3 8.5h3l1.5-2.5h8L17 8.5h3a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 19.5H4A1.5 1.5 0 0 1 2.5 18v-8A1.5 1.5 0 0 1 4 8.5" />
+    <circle cx="12" cy="13.5" r="3.5" />
+  </>
+);
+
+export const IconBell = ic(
+  <>
+    <path d="M6 9a6 6 0 0 1 12 0c0 4.5 1.5 6 1.5 6h-15S6 13.5 6 9" />
+    <path d="M10 18.5a2 2 0 0 0 4 0" />
+  </>
+);
+
+export const IconBellOff = ic(
+  <>
+    <path d="M8.2 5.6A6 6 0 0 1 18 9c0 4.5 1.5 6 1.5 6h-11" />
+    <path d="M6 9v6H4.5S6 13.5 6 9" />
+    <path d="M10 18.5a2 2 0 0 0 4 0" />
+    <path d="M3.5 3.5l17 17" />
+  </>
+);
+
+export const IconPin = ic(
+  <>
+    <path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.9l-5 2.6 1.2-5.7L4 8.9l5.6-.6z" />
   </>
 );

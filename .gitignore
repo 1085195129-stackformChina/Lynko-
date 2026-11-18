@@ -38,3 +38,11 @@ NUL
 # Untracked tooling / test artifacts
 .impeccable/
 sim/downloads/
+.hermes/
+/downloads/
+
+# Internal scratch notes and one-off root scripts — never commit
+/PRODUCT.md
+/docs/nectar-tasks-2.md
+/docs/plan-windows-complete.md
+/*.py
