@@ -13,7 +13,7 @@ import {filterNotification, isAppSuppressed} from './enhancements/logic.mjs';
 import {HealthPanel, FeatureControls, PrivacyControls} from './enhancements/Panels';
 import {UpdatePrompt, UpdateSection} from './enhancements/Update';
 import {QualitySection, presetDims} from './enhancements/Quality';
-import {text as extra} from './enhancements/strings';
+import {text as extra, type EnhancementKey} from './enhancements/strings';
 import Onboarding from './Onboarding';
 import './enhancements/styles.css';
 
@@ -125,6 +125,9 @@ interface Toast {
   id: number;
   msg: string;
   kind: "info" | "ok" | "err";
+  /** OTP found in a mirrored notification — rendered as a Copy-code button. */
+  code?: string;
+  at: number;
 }
 
 let toastUid = 0;
@@ -132,14 +135,55 @@ let toastUid = 0;
 function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const push = useCallback((msg: string, kind: Toast["kind"] = "info") => {
+  const push = useCallback((msg: string, kind: Toast["kind"] = "info", code?: string) => {
+    // Errors live in the dev console only; a toast per failed poll buries the
+    // UI in noise. Action failures still surface in their own inline state.
+    if (kind === "err") return console.error(msg);
     const id = ++toastUid;
-    setToasts((t) => [...t.slice(-4), { id, msg, kind }]);
+    const at = Date.now();
+    setToasts((t) => [
+      ...t.filter((x) => !(x.msg === msg && at - x.at < 4000)).slice(-4),
+      { id, msg, kind, at, code },
+    ]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
   }, []);
 
   return { toasts, push };
 }
+
+/* ------------------------------------------------------------------ */
+/* OTP detection + per-device feature caps                             */
+/* ------------------------------------------------------------------ */
+
+/* One-time codes in mirrored notification text: 4–8 digits not adjacent to
+   any other digit. The lookarounds ARE the production-number guard: a phone
+   number or order id (9+ digit run) can never match a substring, because
+   every inner 4–8 digit window is digit-adjacent on both sides.
+   ponytail: no word-context heuristics ("code", "PIN"); add only if a real
+   false positive shows up. */
+const OTP_RE = /(?<!\d)\d{4,8}(?!\d)/;
+const otpOf = (s: string) => s.match(OTP_RE)?.[0] ?? null;
+
+/* Per-device feature switches (NectarLink parity): each paired phone keeps
+   its own allow-list, persisted as `lynko-caps-<device-id>` (JSON). UI-only
+   for now — the link layer does not consult it yet (a future track wires
+   the backend), so flipping a switch changes storage and nothing else. */
+type CapKey = "clipboard" | "files" | "notifications" | "screen" | "audio" | "desktop-control";
+const CAP_KEYS: CapKey[] = ["clipboard", "files", "notifications", "screen", "audio", "desktop-control"];
+const CAP_LABELS: Record<CapKey, EnhancementKey> = {
+  clipboard: "clipboard", files: "files", notifications: "notifications",
+  screen: "screen", audio: "audio", "desktop-control": "desktopControl",
+};
+// Sensitive features stay OFF until the user allows them (NectarLink default).
+const CAP_DEFAULTS: Record<CapKey, boolean> = {
+  clipboard: true, files: true, notifications: true, screen: false, audio: false, "desktop-control": false,
+};
+const readCaps = (id: string): Record<CapKey, boolean> => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(`lynko-caps-${id}`) ?? "{}");
+    return { ...CAP_DEFAULTS, ...(raw as Partial<Record<CapKey, boolean>>) };
+  } catch { return { ...CAP_DEFAULTS }; }
+};
 
 /* ------------------------------------------------------------------ */
 /* App                                                                  */
@@ -423,6 +467,10 @@ export default function App() {
         // to 0 silently breaks every notification reply.
         const nid = ((ev.d.notif_id ?? ev.d.notifId) as number) ?? 0;
         setNotes((n) => [{ id: ++toastUid, app, title, body, at: Date.now(), notifId: nid }, ...n].slice(0, 50));
+        // OTP parity: surface the code with a one-click Copy button. The
+        // native OS toast cannot carry actions, so the in-app toast does.
+        const otp = otpOf(`${title} ${body}`);
+        if (otp) toast(`${extra(prefsLangRef.current, "otpToast")}: ${otp}`, "ok", otp);
         // Native OS toast (Samsung Flow parity: alerts while you work on the
         // PC). Honors the persisted Settings → desktop-notifications toggle;
         // read from localStorage so it works from any component.
@@ -475,6 +523,26 @@ export default function App() {
     if (change.audio === false) void stopAudio();
   };
 
+  /* Copy-code: the Tauri clipboard command is the reliable writer under
+     WebView2; navigator.clipboard is the browser-dev fallback. */
+  const copyText = useCallback(async (text: string) => {
+    try { await api.invoke("set_pc_clipboard", { text }); }
+    catch { try { await navigator.clipboard.writeText(text); } catch { /* no clipboard */ } }
+    toast(extra(prefsLangRef.current, "copied"), "ok");
+  }, [toast]);
+
+  /* Dismiss-sync: drop the card here AND tell the phone to cancel that
+     notification when the link is up. No `notif_dismiss` command exists in
+     the Rust Command enum yet, so the JSON rides the one generic passthrough
+     (send_signal → phone receives t="signal" carrying this payload).
+     ponytail: swap to a core Command::NotifDismiss + main.rs command when it
+     lands; the phone side matches on the payload kind either way. */
+  const dismissNote = useCallback((n: NoteItem) => {
+    setNotes((items) => items.filter((x) => x.id !== n.id));
+    if (!linkRef.current.connected || !n.notifId) return;
+    void api.invoke("send_signal", { payload: { kind: "notif_dismiss", app: n.app, notif_id: n.notifId } }).catch(() => {});
+  }, []);
+
   return (
     <div className={link.connected ? "app live" : "app"}>
       <Shell
@@ -493,6 +561,8 @@ export default function App() {
         startAudio={startAudio}
         stopAudio={stopAudio}
         screenFps={screenFps}
+        copyText={copyText}
+        dismissNote={dismissNote}
         onboarding={onboarding}
         setOnboarding={setOnboarding}
       />
@@ -501,6 +571,9 @@ export default function App() {
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
             {t.kind === "ok" ? "✓" : t.kind === "err" ? "✕" : "●"} {t.msg}
+            {t.code && (
+              <button className="toast-copy" onClick={() => void copyText(t.code!)}>{extra(lang, "copyCode")}</button>
+            )}
           </div>
         ))}
       </div>
@@ -528,6 +601,10 @@ interface ShellProps {
   startAudio: () => Promise<void>;
   stopAudio: () => Promise<void>;
   screenFps: number;
+  /** Copy a verified OTP to the desktop clipboard. */
+  copyText: (text: string) => Promise<void>;
+  /** Clear a mirrored notification locally + on the phone (dismiss-sync). */
+  dismissNote: (n: NoteItem) => void;
   onboarding: boolean; setOnboarding: (v: boolean) => void;
 }
 
@@ -691,13 +768,17 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
   };
 
   const disconnect = async () => {
-    await api.invoke("disconnect");
-    toast(tr(lang, "toasts", "disconnected"), "info");
+    try {
+      await api.invoke("disconnect");
+      toast(tr(lang, "toasts", "disconnected"), "info");
+    } catch (e) { toast(`Disconnect failed: ${e}`, "err"); }
   };
 
   const forget = async (d: Device) => {
-    await api.invoke("forget_device", { deviceId: d.id });
-    toast(tr(lang, "toasts", "forgot").replace("{name}", d.name), "info");
+    try {
+      await api.invoke("forget_device", { deviceId: d.id });
+      toast(tr(lang, "toasts", "forgot").replace("{name}", d.name), "info");
+    } catch (e) { toast(`Forget failed: ${e}`, "err"); }
   };
 
   const paired = devices.filter((d) => d.paired);
@@ -778,7 +859,7 @@ function DevicesView({ devices, link, toast, lang }: ShellProps) {
                 <div key={d.id} className="devrow">
                   <span className={d.id.startsWith("usb:") ? "dev-dot usb" : "dev-dot on"} />
                   <div className="who"><strong>{d.name}</strong><span className={d.id.startsWith("usb:") ? "via" : "addr"} title={d.address}>{d.id.startsWith("usb:") ? T("via_usb") : d.address}</span>
-                    {pairUnavailable === d.id && <span role="status" style={{color: "var(--amber, #ffb454)", maxWidth: 340}}>{T("pair_hint_open")}</span>}
+                    {pairUnavailable === d.id && <span role="status" style={{color: "var(--signal)", maxWidth: 340}}>{T("pair_hint_open")}</span>}
                   </div>
                   <button className="btn sm primary" disabled={checkingPair !== null} onClick={() => pair(d)}>{checkingPair === d.id ? T("checking") : T("pair")}</button>
                 </div>
@@ -1072,12 +1153,12 @@ function ScreenView(props: ShellProps) {
     if (dragging.current) {
       dragging.current = false;
       const p = norm(ev);
-      try { await api.invoke("inject_drag_end", { x: p.x, y: p.y }); } catch {}
+      try { await api.invoke("inject_drag_end", { x: p.x, y: p.y }); } catch (e) { toast(String(e), "err"); }
       dragStart.current = null;
       return;
     }
     const p = norm(ev);
-    try { await api.invoke("inject_tap", { x: p.x, y: p.y }); } catch {}
+    try { await api.invoke("inject_tap", { x: p.x, y: p.y }); } catch (e) { toast(String(e), "err"); }
   };
 
   const onKey = async (ev: React.KeyboardEvent) => {
@@ -1088,7 +1169,7 @@ function ScreenView(props: ShellProps) {
       try {
         const clip = await api.invoke<string>("get_pc_clipboard");
         if (clip) await api.invoke("inject_text", { text: clip });
-      } catch {}
+      } catch (e) { toast(String(e), "err"); }
       return;
     }
     // Everything else goes through the shared, tested key map — so a modifier
@@ -1103,10 +1184,10 @@ function ScreenView(props: ShellProps) {
     });
     if (act.kind === "drop") return;
     if (act.kind === "text") {
-      try { await api.invoke("inject_text", { text: act.text }); } catch {}
+      try { await api.invoke("inject_text", { text: act.text }); } catch (e) { toast(String(e), "err"); }
     } else {
       ev.preventDefault();
-      try { await api.invoke("inject_key", { key: act.key }); } catch {}
+      try { await api.invoke("inject_key", { key: act.key }); } catch (e) { toast(String(e), "err"); }
     }
   };
 
@@ -1177,7 +1258,7 @@ function ScreenView(props: ShellProps) {
         await document.exitFullscreen();
         setFullscreen(false);
       }
-    } catch {}
+    } catch (e) { toast(String(e), "err"); }
   };
 
   return (
@@ -1231,9 +1312,9 @@ function ScreenView(props: ShellProps) {
             : <button className="rail-icon" onClick={stop} title={T("stop")} aria-label={T("stop")}><IconStop /></button>}
         </div>
         <div className="screen-rail-group">
-          <button className="rail-icon" disabled={!link.connected} onClick={() => { try { void api.invoke("inject_key", { key: "BACK" }); } catch {} }} title={T("back")} aria-label={T("back")}><IconBack /></button>
-          <button className="rail-icon" disabled={!link.connected} onClick={() => { try { void api.invoke("inject_key", { key: "HOME" }); } catch {} }} title={T("home")} aria-label={T("home")}><IconHome /></button>
-          <button className="rail-icon" disabled={!link.connected} onClick={() => { try { void api.invoke("inject_key", { key: "RECENTS" }); } catch {} }} title={T("recents")} aria-label={T("recents")}><IconRecents /></button>
+          <button className="rail-icon" disabled={!link.connected} onClick={() => { void api.invoke("inject_key", { key: "BACK" }).catch(e => toast(String(e), "err")); }} title={T("back")} aria-label={T("back")}><IconBack /></button>
+          <button className="rail-icon" disabled={!link.connected} onClick={() => { void api.invoke("inject_key", { key: "HOME" }).catch(e => toast(String(e), "err")); }} title={T("home")} aria-label={T("home")}><IconHome /></button>
+          <button className="rail-icon" disabled={!link.connected} onClick={() => { void api.invoke("inject_key", { key: "RECENTS" }).catch(e => toast(String(e), "err")); }} title={T("recents")} aria-label={T("recents")}><IconRecents /></button>
         </div>
         <div className="screen-rail-group">
           <button className="rail-icon" disabled={!link.connected} onClick={toggleRotate} title={rotated ? T("upright") : T("rotate")} aria-label={rotated ? T("upright") : T("rotate")}><IconRotate /></button>
@@ -1352,70 +1433,110 @@ function FilesView(props: ShellProps) {
     } catch (e) { toast(`Browse failed: ${e}`, "err"); }
   };
 
+  const num = (n: number) => String(n).padStart(2, "0");
+  const online = props.devices.filter((d) => d.online).length;
+  const paired = props.devices.filter((d) => d.paired).length;
+  const queued = files.some((f) => f.status === "queued");
+
   return (
-    <div className="view">
-      <PageHead title={T("files_title")} sub={T("files_sub")} />
-      <p className="desc">{extra(lang,'queueHint')}</p><p className="desc">{extra(lang,'queuePaused')}</p>
-      <div className="card">
-        {link.connected && target ? (
-          <div className="share-target">
-            <span className="share-target-label">{extra(lang, "shareTarget")}</span>
-            <button
-              className="btn sm ghost"
-              onClick={() => props.setView("devices")}
-              title={extra(lang, "sharePickRecipient")}
-            >
-              {target.name}
-            </button>
-            <span className="share-target-state">{extra(lang, "shareConnected")}</span>
-          </div>
-        ) : (
-          <div className="share-target off">
-            <span className="share-target-label">{extra(lang, "shareTarget")}</span>
-            <span className="share-target-none">{extra(lang, "shareTargetNone")}</span>
-            <span className="share-target-hint">{extra(lang, "shareSameWifi")}</span>
-            <button className="btn sm ghost" onClick={() => props.setView("devices")}>
-              {extra(lang, "shareTroubleshoot")}
-            </button>
-          </div>
-        )}
-        <div
-          className={dragOver ? "dropzone over" : "dropzone"}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={onDrop}
-          onClick={browse}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter") browse(); }}
-        >
-          <strong>{T("drop_send")}</strong>
-          <span>{T("drop_browse")}</span>
+    <div className="view files-view">
+      <header className="files-masthead">
+        <div className="files-masthead-copy">
+          <span className="files-kicker" aria-hidden="true"><b>03</b></span>
+          <h1>{T("files_title")}</h1>
+          <p>{T("files_sub")}</p>
         </div>
-        {files.length > 0 && (
-          <div className="file-list">
-            {files.map((f) => {
-              const pct = f.size && f.written ? Math.min(100, Math.round((f.written / f.size) * 100)) : null;
-              return (
-                <div className="file-row" key={f.id}>
-                  <IconFiles /><span>{f.name}</span>
-                  <span className="sz">
-                    {f.size ? `${(f.size / 1024).toFixed(0)} KB` : "…"} · {extra(lang,f.status)}
-                    {pct != null && f.status === "sent" && f.written! < (f.size ?? 0) ? ` · ${pct}%` : ""}
-                  </span>
-                  {f.status==='queued' && <button className="btn sm ghost" onClick={()=>props.cancelFile(f.id)}>{extra(lang,'cancel')}</button>}
-                  {['failed','cancelled'].includes(f.status) && <button className="btn sm ghost" onClick={()=>props.retryFile(f.id)}>{extra(lang,'retry')}</button>}
-                  {f.error && <span role="status">{f.error}</span>}
-                  {pct != null && (
-                    <span className="fbar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
-                  )}
-                </div>
-              );
-            })}
+        <div className="files-meters">
+          <span><i className={link.connected ? "on" : ""} />{T("online_count").replace("{n}", String(online))}</span>
+          <span>{T("paired_count").replace("{n}", String(paired))}</span>
+        </div>
+      </header>
+
+      <div className="files-workspace">
+        <section className="files-out" aria-label={T("send")}>
+          <div className="files-bayhead">
+            <h2>{T("send")}</h2>
+            <span className="files-baynum">{num(files.length)}</span>
           </div>
-        )}
+
+          <button
+            type="button"
+            className={link.connected ? "files-route live" : "files-route"}
+            onClick={() => props.setView("devices")}
+            title={extra(lang, "sharePickRecipient")}
+          >
+            <span className="files-route-icon"><IconDevices /></span>
+            <span className="files-route-copy">
+              <small>{extra(lang, "shareTarget")}</small>
+              <strong>{link.connected && target ? target.name : extra(lang, "shareTargetNone")}</strong>
+            </span>
+            {link.connected && (
+              <span className="files-route-state"><i />{extra(lang, "shareConnected")}</span>
+            )}
+          </button>
+
+          {!link.connected && (
+            <div className="files-offline">
+              <p>{extra(lang, "shareSameWifi")}</p>
+              <button className="btn sm ghost" onClick={() => props.setView("devices")}>
+                {extra(lang, "shareTroubleshoot")}
+              </button>
+            </div>
+          )}
+
+          <div
+            className={dragOver ? "dropzone files-drop over" : "dropzone files-drop"}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            onClick={browse}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter") browse(); }}
+          >
+            <span className="files-corner tl" aria-hidden="true" />
+            <span className="files-corner tr" aria-hidden="true" />
+            <span className="files-corner bl" aria-hidden="true" />
+            <span className="files-corner br" aria-hidden="true" />
+            <span className="files-drop-mark" aria-hidden="true"><IconFiles /></span>
+            <strong>{T("drop_send")}</strong>
+            <span>{T("drop_browse")}</span>
+          </div>
+
+          <p className="files-footnote">{extra(lang, "queueHint")}</p>
+          {queued && <p className="files-footnote dim">{extra(lang, "queuePaused")}</p>}
+
+          {files.length > 0 && (
+            <div className="files-queue">
+              <div className="files-bayhead">
+                <h2>{T("file_queue")}</h2>
+              </div>
+              {files.map((f, i) => {
+                const pct = f.size && f.written != null ? Math.min(100, Math.round((f.written / f.size) * 100)) : null;
+                const live = f.status === "sending" && pct != null;
+                return (
+                  <div className="file-row files-row" key={f.id}>
+                    <span className="files-row-id" aria-hidden="true">{num(i + 1)}</span>
+                    <span className="files-row-name" title={f.name}><IconFiles /><span>{f.name}</span></span>
+                    <span className="files-row-state">{extra(lang, f.status)}</span>
+                    <span className="files-row-size">{live ? `${(f.written! / 1024).toFixed(0)} / ${(f.size! / 1024).toFixed(0)} KB · ${pct}%` : f.size ? `${(f.size / 1024).toFixed(0)} KB` : "…"}</span>
+                    {f.status === "queued" && <button className="btn sm ghost" onClick={() => props.cancelFile(f.id)}>{extra(lang, "cancel")}</button>}
+                    {["failed", "cancelled"].includes(f.status) && <button className="btn sm ghost" onClick={() => props.retryFile(f.id)}>{extra(lang, "retry")}</button>}
+                    {f.error && <span className="files-row-err" role="status">{f.error}</span>}
+                    {pct != null && (f.status === "sent" || live) && (
+                      <span className="fbar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <aside className="files-in">
+          <ShareHistory lang={lang} />
+        </aside>
       </div>
-      <ShareHistory lang={lang} />
     </div>
   );
 }
@@ -1508,14 +1629,32 @@ function NotificationsView(props: ShellProps) {
       )}
       <div className="card">
         {visible.length === 0 ? <p className="empty-inline">{T("no_notifications_yet")}</p> :
-          visible.map((n) => (
+          visible.map((n) => {
+            // Same regex as the incoming-notification toast: the card shows
+            // Copy code for anything the toast would have offered.
+            const otp = otpOf(`${n.title} ${n.body}`);
+            return (
             <div className="note-row" key={n.id}>
+              <button
+                className="note-dismiss"
+                onClick={() => props.dismissNote(n)}
+                title={extra(lang, "dismiss")}
+                aria-label={extra(lang, "dismiss")}
+              >✕</button>
               <div className="note-app">{n.app}</div>
               <p className="note-title">{n.title}</p>
               <p className="note-body">{n.body}</p>
-              {link.connected && <button className="ghost" onClick={() => setReplyTo(n)}>{T("reply")}</button>}
+              <div className="note-acts">
+                {otp && (
+                  <button className="btn sm ghost" onClick={() => void props.copyText(otp)}>
+                    {extra(lang, "copyCode")} <span className="otp-code">{otp}</span>
+                  </button>
+                )}
+                {link.connected && <button className="ghost" onClick={() => setReplyTo(n)}>{T("reply")}</button>}
+              </div>
             </div>
-          ))
+            );
+          })
         }
       </div>
       {replyTo && (
@@ -1543,7 +1682,7 @@ function NotificationsView(props: ShellProps) {
 /* ------------------------------------------------------------------ */
 
 function SettingsView(props: ShellProps) {
-  const { lang, setLang } = props;
+  const { lang, setLang, toast } = props;
   // Both toggles persist: flipping one actually does something on THIS run
   // and survives a restart (localStorage), instead of resetting on every
   // navigation the way plain useState(true) did.
@@ -1554,7 +1693,7 @@ function SettingsView(props: ShellProps) {
   const toggleAutoReconnect = (on: boolean) => {
     setAutoReconnect(on);
     localStorage.setItem("lynko-autoreconnect", on ? "1" : "0");
-    void api.invoke("set_auto_reconnect", { on }).catch(() => {});
+    void api.invoke("set_auto_reconnect", { on }).catch(e => toast(String(e), "err"));
   };
   const toggleToasts = (on: boolean) => {
     setToasts(on);
@@ -1583,6 +1722,23 @@ function SettingsView(props: ShellProps) {
               </div>
             </div>
           </div>
+          <div className="set-row">
+            <div className="what"><strong>{extra(lang,'theme')}</strong></div>
+            <div className="ctl">
+              <div className="lang-switch">
+                {(['system','dark','light'] as const).map((th) => (
+                  <button
+                    key={th}
+                    className={props.prefs.theme === th ? "lang-btn on" : "lang-btn"}
+                    aria-pressed={props.prefs.theme === th}
+                    onClick={()=>props.updatePrefs({theme:th})}
+                  >
+                    {extra(lang, th === 'system' ? 'themeSystem' : th === 'dark' ? 'themeDark' : 'themeLight')}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
           <SetRow title={extra(lang,'animations')} desc={extra(lang,'motionHint')} on={props.prefs.animations} onToggle={()=>props.updatePrefs({animations:!props.prefs.animations})}/>
           <QualitySection lang={lang}/>
         </div>
@@ -1595,6 +1751,9 @@ function SettingsView(props: ShellProps) {
       </SetGroup>
       <SetGroup title={T("sec_features")} hint={extra(lang,'trustHint')}>
         <FeatureControls lang={lang} prefs={props.prefs} updatePrefs={props.updatePrefs}/>
+      {/* NectarLink parity: every paired phone carries its own allow-list.
+          Persisted under lynko-caps-<device-id>; a future track consults it. */}
+      <DeviceCapsCard lang={lang} devices={props.devices} />
       </SetGroup>
       <SetGroup title={T("sec_notifications")}>
         <div className="card">
@@ -1646,6 +1805,46 @@ function SetRow({ title, desc, on, onToggle }: { title: string; desc: string; on
     <div className="set-row">
       <div className="what"><strong>{title}</strong><span>{desc}</span></div>
       <button className={on ? "toggle on" : "toggle"} onClick={onToggle} role="switch" aria-checked={on} aria-label={title} />
+    </div>
+  );
+}
+
+/* Per-device feature switches (Settings › Devices card). Flat rows with the
+   stock hairline toggle — no rounded cards per row. Values live in
+   localStorage only; nothing on the link path reads them yet. */
+function DeviceCapsCard({ lang, devices }: { lang: Lang; devices: Device[] }) {
+  // localStorage is the store, so a toggle only needs a re-render — no copy
+  // of the caps tree to keep in sync (devices arrive async via discovery).
+  const [, force] = useState(0);
+  const paired = devices.filter((d) => d.paired);
+  const setCap = (id: string, key: CapKey, on: boolean) => {
+    try { localStorage.setItem(`lynko-caps-${id}`, JSON.stringify({ ...readCaps(id), [key]: on })); } catch { /* quota */ }
+    force((n) => n + 1);
+  };
+  return (
+    <div className="card">
+      <div className="set-row">
+        <div className="what"><strong>{extra(lang, "deviceCapsTitle")}</strong><span>{extra(lang, "deviceCapsHint")}</span></div>
+      </div>
+      {paired.length === 0 && <p className="empty-inline">{extra(lang, "deviceCapsEmpty")}</p>}
+      {paired.map((d) => {
+        const caps = readCaps(d.id);
+        return (
+          <div key={d.id} className="cap-device">
+            <div className="cap-device-name">{d.name}</div>
+            {CAP_KEYS.map((k) => (
+              <div className="set-row cap-row" key={k}>
+                <div className="what"><strong>{extra(lang, CAP_LABELS[k])}</strong></div>
+                <button
+                  className={caps[k] ? "toggle on" : "toggle"}
+                  onClick={() => setCap(d.id, k, !caps[k])}
+                  role="switch" aria-checked={caps[k]} aria-label={`${d.name}: ${extra(lang, CAP_LABELS[k])}`}
+                />
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
